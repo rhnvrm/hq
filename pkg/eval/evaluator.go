@@ -930,8 +930,18 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 		return evalReverse(ctx)
 	case "sort":
 		return evalSort(ctx)
+	case "sort_by":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("sort_by requires 1 argument")
+		}
+		return evalSortBy(n.Args[0], ctx)
 	case "unique":
 		return evalUnique(ctx)
+	case "unique_by":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("unique_by requires 1 argument")
+		}
+		return evalUniqueBy(n.Args[0], ctx)
 	case "flatten":
 		depth := 1
 		if len(n.Args) > 0 {

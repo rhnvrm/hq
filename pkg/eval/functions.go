@@ -491,6 +491,55 @@ func evalSort(ctx *types.Context) ([]*types.CandidateNode, error) {
 	return results, nil
 }
 
+// evalSortBy sorts an array by a key expression.
+func evalSortBy(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("sort_by requires array input, got %T", node.Value)
+		}
+
+		// Build array of (element, key) pairs
+		type elemKey struct {
+			elem any
+			key  any
+		}
+		pairs := make([]elemKey, len(arr))
+		for i, elem := range arr {
+			// Evaluate key expression
+			elemCtx := ctx.Clone()
+			elemCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(elem)})
+
+			keyResults, err := evaluate(expr, elemCtx)
+			if err != nil {
+				return nil, err
+			}
+			var key any
+			if len(keyResults) > 0 {
+				key = keyResults[0].Value
+			}
+			pairs[i] = elemKey{elem: elem, key: key}
+		}
+
+		// Sort by key
+		sort.Slice(pairs, func(i, j int) bool {
+			return compareValues(pairs[i].key, pairs[j].key) < 0
+		})
+
+		// Extract sorted elements
+		sorted := make([]any, len(pairs))
+		for i, p := range pairs {
+			sorted[i] = p.elem
+		}
+
+		results = append(results, types.NewCandidateNode(sorted))
+	}
+
+	return results, nil
+}
+
 // compareValues compares two values for sorting.
 func compareValues(a, b any) int {
 	// Nulls first
@@ -563,6 +612,45 @@ func evalUnique(ctx *types.Context) ([]*types.CandidateNode, error) {
 			key := fmt.Sprintf("%v", elem)
 			if !seen[key] {
 				seen[key] = true
+				unique = append(unique, elem)
+			}
+		}
+
+		results = append(results, types.NewCandidateNode(unique))
+	}
+
+	return results, nil
+}
+
+// evalUniqueBy removes duplicates based on a key expression.
+func evalUniqueBy(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("unique_by requires array input, got %T", node.Value)
+		}
+
+		seen := make(map[string]bool)
+		var unique []any
+
+		for _, elem := range arr {
+			// Evaluate key expression
+			elemCtx := ctx.Clone()
+			elemCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(elem)})
+
+			keyResults, err := evaluate(expr, elemCtx)
+			if err != nil {
+				return nil, err
+			}
+			var keyStr string
+			if len(keyResults) > 0 {
+				keyStr = fmt.Sprintf("%v", keyResults[0].Value)
+			}
+
+			if !seen[keyStr] {
+				seen[keyStr] = true
 				unique = append(unique, elem)
 			}
 		}
