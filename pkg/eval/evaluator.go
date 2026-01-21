@@ -94,6 +94,9 @@ func evaluate(node parser.ExpressionNode, ctx *types.Context) ([]*types.Candidat
 	case *parser.OptionalNode:
 		return evalOptional(n, ctx)
 
+	case *parser.TryCatchNode:
+		return evalTryCatch(n, ctx)
+
 	default:
 		return nil, fmt.Errorf("unimplemented expression type: %T", node)
 	}
@@ -730,6 +733,24 @@ func evalOptional(n *parser.OptionalNode, ctx *types.Context) ([]*types.Candidat
 	return filtered, nil
 }
 
+// evalTryCatch evaluates try-catch for error handling.
+func evalTryCatch(n *parser.TryCatchNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Try to evaluate the try expression
+	results, err := evaluate(n.Try, ctx)
+	if err == nil {
+		// Success - return results
+		return results, nil
+	}
+
+	// Error occurred - evaluate catch if present
+	if n.Catch != nil {
+		return evaluate(n.Catch, ctx)
+	}
+
+	// No catch - return empty
+	return []*types.CandidateNode{}, nil
+}
+
 // evalRecursiveDescent evaluates the recursive descent operator (..).
 // It returns all values in the input, recursively descending into arrays and objects.
 func evalRecursiveDescent(n *parser.RecursiveDescentNode, ctx *types.Context) ([]*types.CandidateNode, error) {
@@ -944,6 +965,48 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 		return evalTypeFilter(ctx, "array")
 	case "objects":
 		return evalTypeFilter(ctx, "object")
+	case "test":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("test requires 1 argument")
+		}
+		return evalTest(n.Args[0], ctx)
+	case "match":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("match requires 1 argument")
+		}
+		return evalMatch(n.Args[0], ctx)
+	case "capture":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("capture requires 1 argument")
+		}
+		return evalCapture(n.Args[0], ctx)
+	case "sub":
+		if len(n.Args) != 2 {
+			return nil, fmt.Errorf("sub requires 2 arguments")
+		}
+		return evalSub(n.Args[0], n.Args[1], ctx)
+	case "gsub":
+		if len(n.Args) != 2 {
+			return nil, fmt.Errorf("gsub requires 2 arguments")
+		}
+		return evalGsub(n.Args[0], n.Args[1], ctx)
+	case "error":
+		if len(n.Args) == 0 {
+			return nil, fmt.Errorf("error")
+		}
+		if len(n.Args) == 1 {
+			msgResults, err := evaluate(n.Args[0], ctx)
+			if err != nil {
+				return nil, err
+			}
+			if len(msgResults) > 0 {
+				if msg, ok := msgResults[0].Value.(string); ok {
+					return nil, fmt.Errorf("%s", msg)
+				}
+			}
+			return nil, fmt.Errorf("error")
+		}
+		return nil, fmt.Errorf("error takes 0 or 1 argument")
 	case "split":
 		if len(n.Args) != 1 {
 			return nil, fmt.Errorf("split requires 1 argument")

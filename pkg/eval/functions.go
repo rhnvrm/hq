@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -754,6 +755,270 @@ func evalTypeFilter(ctx *types.Context, typeName string) ([]*types.CandidateNode
 		if match {
 			results = append(results, node)
 		}
+	}
+
+	return results, nil
+}
+
+// evalTest tests if a string matches a regex pattern.
+func evalTest(patternExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate pattern
+	patternResults, err := evaluate(patternExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(patternResults) == 0 {
+		return nil, fmt.Errorf("test: pattern produced no value")
+	}
+	pattern, ok := patternResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("test: pattern must be a string, got %T", patternResults[0].Value)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("test: invalid regex: %w", err)
+	}
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("test: input must be a string, got %T", node.Value)
+		}
+
+		results = append(results, types.NewCandidateNode(re.MatchString(s)))
+	}
+
+	return results, nil
+}
+
+// evalMatch returns match information for a regex.
+func evalMatch(patternExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate pattern
+	patternResults, err := evaluate(patternExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(patternResults) == 0 {
+		return nil, fmt.Errorf("match: pattern produced no value")
+	}
+	pattern, ok := patternResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("match: pattern must be a string, got %T", patternResults[0].Value)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("match: invalid regex: %w", err)
+	}
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("match: input must be a string, got %T", node.Value)
+		}
+
+		match := re.FindStringSubmatchIndex(s)
+		if match == nil {
+			results = append(results, types.NewCandidateNode(nil))
+			continue
+		}
+
+		// Build match object
+		captures := buildCaptures(re, s, match)
+		if captures == nil {
+			captures = []any{} // Empty array, not null
+		}
+		matchObj := map[string]any{
+			"offset":   float64(match[0]),
+			"length":   float64(match[1] - match[0]),
+			"string":   s[match[0]:match[1]],
+			"captures": captures,
+		}
+
+		results = append(results, types.NewCandidateNode(matchObj))
+	}
+
+	return results, nil
+}
+
+// buildCaptures builds the captures array from match indices.
+func buildCaptures(re *regexp.Regexp, s string, match []int) []any {
+	names := re.SubexpNames()
+	var captures []any
+
+	for i := 1; i < len(match)/2; i++ {
+		start, end := match[i*2], match[i*2+1]
+		if start == -1 {
+			captures = append(captures, map[string]any{
+				"offset": float64(-1),
+				"length": float64(0),
+				"string": nil,
+				"name":   names[i],
+			})
+		} else {
+			captures = append(captures, map[string]any{
+				"offset": float64(start),
+				"length": float64(end - start),
+				"string": s[start:end],
+				"name":   names[i],
+			})
+		}
+	}
+
+	return captures
+}
+
+// evalCapture extracts named capture groups.
+func evalCapture(patternExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate pattern
+	patternResults, err := evaluate(patternExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(patternResults) == 0 {
+		return nil, fmt.Errorf("capture: pattern produced no value")
+	}
+	pattern, ok := patternResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("capture: pattern must be a string, got %T", patternResults[0].Value)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("capture: invalid regex: %w", err)
+	}
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("capture: input must be a string, got %T", node.Value)
+		}
+
+		match := re.FindStringSubmatch(s)
+		if match == nil {
+			results = append(results, types.NewCandidateNode(nil))
+			continue
+		}
+
+		// Build capture object with named groups
+		captureObj := make(map[string]any)
+		names := re.SubexpNames()
+		for i, name := range names {
+			if name != "" && i < len(match) {
+				captureObj[name] = match[i]
+			}
+		}
+
+		results = append(results, types.NewCandidateNode(captureObj))
+	}
+
+	return results, nil
+}
+
+// evalSub replaces first match of regex.
+func evalSub(patternExpr, replacementExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate pattern
+	patternResults, err := evaluate(patternExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(patternResults) == 0 {
+		return nil, fmt.Errorf("sub: pattern produced no value")
+	}
+	pattern, ok := patternResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("sub: pattern must be a string, got %T", patternResults[0].Value)
+	}
+
+	// Evaluate replacement
+	replacementResults, err := evaluate(replacementExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(replacementResults) == 0 {
+		return nil, fmt.Errorf("sub: replacement produced no value")
+	}
+	replacement, ok := replacementResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("sub: replacement must be a string, got %T", replacementResults[0].Value)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("sub: invalid regex: %w", err)
+	}
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("sub: input must be a string, got %T", node.Value)
+		}
+
+		// Replace first match only
+		loc := re.FindStringIndex(s)
+		if loc == nil {
+			results = append(results, types.NewCandidateNode(s))
+		} else {
+			result := s[:loc[0]] + replacement + s[loc[1]:]
+			results = append(results, types.NewCandidateNode(result))
+		}
+	}
+
+	return results, nil
+}
+
+// evalGsub replaces all matches of regex.
+func evalGsub(patternExpr, replacementExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate pattern
+	patternResults, err := evaluate(patternExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(patternResults) == 0 {
+		return nil, fmt.Errorf("gsub: pattern produced no value")
+	}
+	pattern, ok := patternResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("gsub: pattern must be a string, got %T", patternResults[0].Value)
+	}
+
+	// Evaluate replacement
+	replacementResults, err := evaluate(replacementExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(replacementResults) == 0 {
+		return nil, fmt.Errorf("gsub: replacement produced no value")
+	}
+	replacement, ok := replacementResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("gsub: replacement must be a string, got %T", replacementResults[0].Value)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("gsub: invalid regex: %w", err)
+	}
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("gsub: input must be a string, got %T", node.Value)
+		}
+
+		result := re.ReplaceAllString(s, replacement)
+		results = append(results, types.NewCandidateNode(result))
 	}
 
 	return results, nil

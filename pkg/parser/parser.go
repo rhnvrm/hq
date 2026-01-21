@@ -815,9 +815,53 @@ func (p *Parser) extractUntilKeywords(tokens []lexer.Token, keywords []string) (
 }
 
 // parseTryCatch parses try-catch
+// Format: try EXPR [catch EXPR]
 func (p *Parser) parseTryCatch(tokens []lexer.Token) (ExpressionNode, []lexer.Token, error) {
-	// TODO: implement
-	return nil, nil, fmt.Errorf("try-catch not yet implemented")
+	// Parse try expression - find the extent until 'catch' or end of expression
+	// We need to handle nesting properly
+	tryTokens, rest, keyword := p.extractUntilKeywords(tokens, []string{"catch"})
+
+	var tryExpr ExpressionNode
+	var err error
+
+	if tryTokens == nil {
+		// No catch, whole thing is try expression
+		tryExpr, rest, err = p.parseExpressionTokens(tokens, 0)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &TryCatchNode{
+			Try:   tryExpr,
+			Catch: nil,
+		}, rest, nil
+	}
+
+	// Parse try part
+	tryExpr, _, err = p.parseExpressionTokens(tryTokens, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if keyword != "catch" {
+		return &TryCatchNode{
+			Try:   tryExpr,
+			Catch: nil,
+		}, rest, nil
+	}
+
+	// Skip 'catch'
+	rest = rest[1:]
+
+	// Parse catch expression
+	catchExpr, rest, err := p.parseExpressionTokens(rest, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &TryCatchNode{
+		Try:   tryExpr,
+		Catch: catchExpr,
+	}, rest, nil
 }
 
 // getOperatorPrecedence returns the precedence and right-associativity of an operator
