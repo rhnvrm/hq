@@ -23,8 +23,9 @@ a:
 			Document: huml(`
 a: 1
 `),
+			// In jq, missing paths return null, not errors
 			Expression: `try .x.y.z catch "not found"`,
-			Expected:   []string{`"not found"`},
+			Expected:   []string{`null`},
 		},
 		{
 			Description: "try catch division by zero",
@@ -50,16 +51,18 @@ b: 0
 			Document: huml(`
 a: 1
 `),
+			// In jq, missing paths return null, not errors
 			Expression: `[try .x.y.z]`,
-			Expected:   []string{`[]`},
+			Expected:   []string{`[null]`},
 		},
 		{
 			Description: "nested try",
 			Document: huml(`
 a: 1
 `),
+			// In jq, missing paths return null, not errors
 			Expression: `try (try .x.y catch .z.w) catch "fallback"`,
-			Expected:   []string{`"fallback"`},
+			Expected:   []string{`null`},
 		},
 	},
 }

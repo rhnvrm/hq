@@ -4,11 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/huml-lang/hq/pkg/parser"
 	"github.com/huml-lang/hq/pkg/types"
 )
+
+// sortedKeys returns the keys of a map sorted alphabetically.
+// This ensures consistent iteration order across Go map operations.
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // Evaluate evaluates an hq expression against input data.
 // Returns a slice of results (multiple outputs for iterators/commas).
@@ -109,6 +121,12 @@ func evaluate(node parser.ExpressionNode, ctx *types.Context) ([]*types.Candidat
 	case *parser.ReduceNode:
 		return evalReduce(n, ctx)
 
+	case *parser.DynamicIndexNode:
+		return evalDynamicIndex(n, ctx)
+
+	case *parser.DestructureBindNode:
+		return evalDestructureBind(n, ctx)
+
 	default:
 		return nil, fmt.Errorf("unimplemented expression type: %T", node)
 	}
@@ -142,7 +160,10 @@ func evalFieldAccess(n *parser.FieldAccessNode, ctx *types.Context) ([]*types.Ca
 	// Access the field from each source
 	var results []*types.CandidateNode
 	for _, source := range sources {
-		value := accessField(source.Value, n.Field)
+		value, err := accessField(source.Value, n.Field)
+		if err != nil {
+			return nil, err
+		}
 		results = append(results, source.WithPath(n.Field))
 		results[len(results)-1].Value = value
 	}
@@ -150,20 +171,23 @@ func evalFieldAccess(n *parser.FieldAccessNode, ctx *types.Context) ([]*types.Ca
 	return results, nil
 }
 
-// accessField gets a field from a value, returning null for missing/invalid.
-func accessField(value any, field string) any {
+// accessField gets a field from a value, returning null for missing fields.
+// Returns null for null input (null propagation in jq).
+// Returns error if trying to access field on non-object/non-null.
+func accessField(value any, field string) (any, error) {
 	if value == nil {
-		return nil
+		// jq propagates null: null.foo => null
+		return nil, nil
 	}
 
 	switch v := value.(type) {
 	case map[string]any:
 		if val, ok := v[field]; ok {
-			return val
+			return val, nil
 		}
-		return nil
+		return nil, nil // Field doesn't exist - return null
 	default:
-		return nil
+		return nil, fmt.Errorf("cannot index %T with string %q", value, field)
 	}
 }
 
@@ -189,6 +213,61 @@ func evalIndexAccess(n *parser.IndexAccessNode, ctx *types.Context) ([]*types.Ca
 		newNode := source.WithPath(n.Index)
 		newNode.Value = value
 		results = append(results, newNode)
+	}
+
+	return results, nil
+}
+
+// evalDynamicIndex evaluates dynamic index/key access (.[expr]).
+// The index expression can evaluate to a string (object key) or number (array index).
+func evalDynamicIndex(n *parser.DynamicIndexNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// First evaluate what we're accessing from
+	var sources []*types.CandidateNode
+	var err error
+
+	if n.From != nil {
+		sources, err = evaluate(n.From, ctx)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		sources = ctx.MatchingNodes
+	}
+
+	var results []*types.CandidateNode
+	for _, source := range sources {
+		// Evaluate the index expression in the context of the source
+		indexCtx := ctx.Clone()
+		indexCtx.SetMatchingNodes([]*types.CandidateNode{source})
+		indexResults, err := evaluate(n.Index, indexCtx)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, indexResult := range indexResults {
+			indexVal := indexResult.Value
+			var value any
+
+			switch idx := indexVal.(type) {
+			case string:
+				// String key - access object field
+				value, err = accessField(source.Value, idx)
+				if err != nil {
+					return nil, err
+				}
+			case float64:
+				// Numeric index - access array element
+				value = accessIndex(source.Value, int(idx))
+			case int:
+				value = accessIndex(source.Value, idx)
+			default:
+				return nil, fmt.Errorf("index must be string or number, got %T", indexVal)
+			}
+
+			newNode := types.NewCandidateNode(value)
+			newNode.Path = append(append([]any{}, source.Path...), indexVal)
+			results = append(results, newNode)
+		}
 	}
 
 	return results, nil
@@ -349,9 +428,9 @@ func iterateValue(node *types.CandidateNode) ([]*types.CandidateNode, error) {
 
 	case map[string]any:
 		results := make([]*types.CandidateNode, 0, len(v))
-		for k, val := range v {
+		for _, k := range sortedKeys(v) {
 			newNode := node.WithPath(k)
-			newNode.Value = val
+			newNode.Value = v[k]
 			results = append(results, newNode)
 		}
 		return results, nil
@@ -418,8 +497,11 @@ func evalBinaryOp(n *parser.BinaryOpNode, ctx *types.Context) ([]*types.Candidat
 
 	// For simplicity, use first result from each side
 	// (Full implementation would handle multiple outputs)
+	// If either side is empty, return empty (not an error)
+	// This is important for expressions like: .type? == "file"
+	// where .type? might produce no output
 	if len(leftResults) == 0 || len(rightResults) == 0 {
-		return nil, fmt.Errorf("empty operand for %s", n.Op)
+		return []*types.CandidateNode{}, nil
 	}
 
 	left := leftResults[0].Value
@@ -865,8 +947,10 @@ func evalAssign(n *parser.AssignNode, ctx *types.Context) ([]*types.CandidateNod
 			continue
 		}
 
-		// Extract path from the left side
-		path, err := extractPath(n.Path)
+		// Extract path from the left side (with context for dynamic indices)
+		pathCtx := ctx.Clone()
+		pathCtx.SetMatchingNodes([]*types.CandidateNode{node})
+		path, err := extractPathWithContext(n.Path, pathCtx)
 		if err != nil {
 			return nil, fmt.Errorf("invalid assignment path: %w", err)
 		}
@@ -960,6 +1044,33 @@ func evalAssign(n *parser.AssignNode, ctx *types.Context) ([]*types.CandidateNod
 
 			// Perform subtraction
 			newValue, err := subtractValues(currentValue, subValue)
+			if err != nil {
+				return nil, err
+			}
+
+			modified, err = setPath(modified, path, newValue)
+			if err != nil {
+				return nil, err
+			}
+
+		case "*=":
+			// Multiply-assign: get current, multiply by value, set result
+			currentValue, err := getPath(modified, path)
+			if err != nil {
+				currentValue = nil
+			}
+			nodeCtx.MatchingNodes = []*types.CandidateNode{node}
+			valueResults, err := evaluate(n.Value, nodeCtx)
+			if err != nil {
+				return nil, err
+			}
+			if len(valueResults) == 0 {
+				continue
+			}
+			mulValue := valueResults[0].Value
+
+			// Perform multiplication
+			newValue, err := multiplyValues(currentValue, mulValue)
 			if err != nil {
 				return nil, err
 			}
@@ -1137,6 +1248,11 @@ func applyIteratorUpdate(n *parser.AssignNode, elem any, iterExpr parser.Express
 
 // extractPath extracts a path (sequence of keys/indices) from an expression
 func extractPath(expr parser.ExpressionNode) ([]any, error) {
+	return extractPathWithContext(expr, nil)
+}
+
+// extractPathWithContext extracts a path, evaluating dynamic indices if context is provided
+func extractPathWithContext(expr parser.ExpressionNode, ctx *types.Context) ([]any, error) {
 	var path []any
 
 	current := expr
@@ -1152,6 +1268,32 @@ func extractPath(expr parser.ExpressionNode) ([]any, error) {
 		case *parser.IndexAccessNode:
 			// Prepend index to path
 			path = append([]any{n.Index}, path...)
+			current = n.From
+		case *parser.DynamicIndexNode:
+			// Need context to evaluate the index expression
+			if ctx == nil {
+				return nil, fmt.Errorf("cannot extract path from %T without context", expr)
+			}
+			// Evaluate the index expression
+			indexResults, err := evaluate(n.Index, ctx)
+			if err != nil {
+				return nil, fmt.Errorf("evaluating dynamic index: %w", err)
+			}
+			if len(indexResults) == 0 {
+				return nil, fmt.Errorf("dynamic index expression produced no results")
+			}
+			indexVal := indexResults[0].Value
+			// Convert to path element
+			switch idx := indexVal.(type) {
+			case string:
+				path = append([]any{idx}, path...)
+			case float64:
+				path = append([]any{int(idx)}, path...)
+			case int:
+				path = append([]any{idx}, path...)
+			default:
+				return nil, fmt.Errorf("dynamic index must be string or number, got %T", indexVal)
+			}
 			current = n.From
 		default:
 			return nil, fmt.Errorf("cannot extract path from %T", expr)
@@ -1570,9 +1712,9 @@ func collectPaths(value any, prefix []any) [][]any {
 
 	switch v := value.(type) {
 	case map[string]any:
-		for k, val := range v {
+		for _, k := range sortedKeys(v) {
 			newPrefix := append(append([]any{}, prefix...), k)
-			paths = append(paths, collectPaths(val, newPrefix)...)
+			paths = append(paths, collectPaths(v[k], newPrefix)...)
 		}
 	case []any:
 		for i, val := range v {
@@ -1580,8 +1722,6 @@ func collectPaths(value any, prefix []any) [][]any {
 			paths = append(paths, collectPaths(val, newPrefix)...)
 		}
 	}
-	// Scalars with empty prefix are skipped (root scalar)
-	// Scalars with non-empty prefix are already added above
 
 	return paths
 }
@@ -1827,6 +1967,59 @@ func subtractValues(a, b any) (any, error) {
 	return nil, fmt.Errorf("cannot subtract %T from %T", b, a)
 }
 
+// multiplyValues multiplies two values
+func multiplyValues(a, b any) (any, error) {
+	// Handle null
+	if a == nil || b == nil {
+		return nil, nil // null * x = null
+	}
+
+	// Try numeric multiplication
+	aNum, aIsNum := toFloat64(a)
+	bNum, bIsNum := toFloat64(b)
+	if aIsNum && bIsNum {
+		return aNum * bNum, nil
+	}
+
+	// String repetition: "x" * 3 = "xxx"
+	if str, ok := a.(string); ok {
+		if n, ok := toFloat64(b); ok && n >= 0 {
+			count := int(n)
+			return strings.Repeat(str, count), nil
+		}
+	}
+
+	// Object merge: {a:1} * {b:2} = {a:1, b:2} (recursive merge)
+	if aObj, ok := a.(map[string]any); ok {
+		if bObj, ok := b.(map[string]any); ok {
+			result := make(map[string]any)
+			// Copy a
+			for k, v := range aObj {
+				result[k] = deepCopy(v)
+			}
+			// Merge b recursively
+			for k, v := range bObj {
+				if existing, exists := result[k]; exists {
+					if existingObj, isObj := existing.(map[string]any); isObj {
+						if vObj, vIsObj := v.(map[string]any); vIsObj {
+							merged, err := multiplyValues(existingObj, vObj)
+							if err != nil {
+								return nil, err
+							}
+							result[k] = merged
+							continue
+						}
+					}
+				}
+				result[k] = deepCopy(v)
+			}
+			return result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("cannot multiply %T by %T", a, b)
+}
+
 // interpolateToString converts a value to its string representation for interpolation.
 // Unlike JSON marshaling, strings are NOT quoted.
 func interpolateToString(v any) string {
@@ -1879,7 +2072,8 @@ func collectAllValues(v any) []*types.CandidateNode {
 			results = append(results, collectAllValues(elem)...)
 		}
 	case map[string]any:
-		for _, elem := range val {
+		for _, k := range sortedKeys(val) {
+			elem := val[k]
 			results = append(results, types.NewCandidateNode(elem))
 			results = append(results, collectAllValues(elem)...)
 		}
@@ -1908,6 +2102,53 @@ func evalVariableBind(n *parser.VariableBindNode, ctx *types.Context) ([]*types.
 			bodyCtx := ctx.Clone()
 			bodyCtx.SetMatchingNodes([]*types.CandidateNode{node})
 			bodyCtx.Variables[n.VarName] = exprResult.Value
+
+			bodyResults, err := evaluate(n.Body, bodyCtx)
+			if err != nil {
+				return nil, err
+			}
+
+			results = append(results, bodyResults...)
+		}
+	}
+
+	return results, nil
+}
+
+// evalDestructureBind evaluates destructuring variable binding (expr as {x: $x, y: $y} | body).
+func evalDestructureBind(n *parser.DestructureBindNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		// Evaluate the expression to destructure
+		exprCtx := ctx.Clone()
+		exprCtx.SetMatchingNodes([]*types.CandidateNode{node})
+
+		exprResults, err := evaluate(n.Expr, exprCtx)
+		if err != nil {
+			return nil, err
+		}
+
+		// For each result from the expression, extract fields and bind to variables
+		for _, exprResult := range exprResults {
+			// The result must be an object
+			obj, ok := exprResult.Value.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("destructure requires object, got %T", exprResult.Value)
+			}
+
+			// Create new context with variables bound
+			bodyCtx := ctx.Clone()
+			bodyCtx.SetMatchingNodes([]*types.CandidateNode{node})
+
+			// Bind each field to its variable
+			for fieldName, varName := range n.Bindings {
+				value, exists := obj[fieldName]
+				if !exists {
+					value = nil // Field doesn't exist - bind to null
+				}
+				bodyCtx.Variables[varName] = value
+			}
 
 			bodyResults, err := evaluate(n.Body, bodyCtx)
 			if err != nil {
@@ -1993,6 +2234,8 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 		return evalLength(ctx)
 	case "keys":
 		return evalKeys(ctx)
+	case "keys_unsorted":
+		return evalKeysUnsorted(ctx)
 	case "values":
 		return evalValues(ctx)
 	case "type":
@@ -2045,9 +2288,17 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 		}
 		return evalUniqueBy(n.Args[0], ctx)
 	case "flatten":
-		depth := 1
+		depth := 1 // Default: flatten one level
 		if len(n.Args) > 0 {
-			// TODO: evaluate depth argument
+			depthResults, err := evaluate(n.Args[0], ctx)
+			if err != nil {
+				return nil, err
+			}
+			if len(depthResults) > 0 {
+				if d, ok := toNumber(depthResults[0].Value); ok {
+					depth = int(d)
+				}
+			}
 		}
 		return evalFlatten(ctx, depth)
 	case "has":
@@ -2299,10 +2550,11 @@ func evalVariable(n *parser.VariableNode, ctx *types.Context) ([]*types.Candidat
 }
 
 // evalAlternative evaluates the alternative operator (//).
+// In jq, // returns the right side if left is false or null.
 func evalAlternative(n *parser.AlternativeNode, ctx *types.Context) ([]*types.CandidateNode, error) {
 	leftResults, err := evaluate(n.Left, ctx)
 	if err == nil && len(leftResults) > 0 {
-		// Check if result is not null/false
+		// Check if result is not null and not false (jq behavior)
 		for _, result := range leftResults {
 			if result.Value != nil && result.Value != false {
 				return leftResults, nil

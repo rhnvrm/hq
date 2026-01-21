@@ -172,8 +172,9 @@ data:
   nested:
     title: "hello"
 `),
+			// Keys are traversed alphabetically (data < name), so data's strings come first
 			Expression: `[.. | strings]`,
-			Expected:   []string{`["Alice", "test", "hello"]`},
+			Expected:   []string{`["test", "hello", "Alice"]`},
 		},
 		{
 			Description: "find all id fields",

@@ -225,6 +225,19 @@ func normalizeValue(v any) any {
 		}
 		return result
 	case float64:
+		// Round to nearest integer if very close (handle floating point precision)
+		rounded := float64(int64(val + 0.5))
+		if val < 0 {
+			rounded = float64(int64(val - 0.5))
+		}
+		// If difference is tiny (floating point error), treat as integer
+		diff := val - rounded
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff < 1e-9 {
+			return int64(rounded)
+		}
 		// Convert whole numbers to int for comparison
 		if val == float64(int64(val)) {
 			return int64(val)

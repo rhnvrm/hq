@@ -11,26 +11,35 @@ import (
 )
 
 // evalLength returns the length of an array, string, or object.
+// For numbers, returns absolute value. For null, returns null.
 func evalLength(ctx *types.Context) ([]*types.CandidateNode, error) {
 	var results []*types.CandidateNode
 
 	for _, node := range ctx.MatchingNodes {
-		var length int
-
 		switch v := node.Value.(type) {
 		case []any:
-			length = len(v)
+			results = append(results, types.NewCandidateNode(float64(len(v))))
 		case string:
-			length = len(v)
+			results = append(results, types.NewCandidateNode(float64(len(v))))
 		case map[string]any:
-			length = len(v)
+			results = append(results, types.NewCandidateNode(float64(len(v))))
 		case nil:
-			length = 0
+			results = append(results, types.NewCandidateNode(nil))
+		case float64:
+			// For numbers, length returns absolute value
+			if v < 0 {
+				v = -v
+			}
+			results = append(results, types.NewCandidateNode(v))
+		case int:
+			absVal := v
+			if absVal < 0 {
+				absVal = -absVal
+			}
+			results = append(results, types.NewCandidateNode(float64(absVal)))
 		default:
 			return nil, fmt.Errorf("cannot get length of %T", node.Value)
 		}
-
-		results = append(results, types.NewCandidateNode(float64(length)))
 	}
 
 	return results, nil
@@ -67,6 +76,34 @@ func evalKeys(ctx *types.Context) ([]*types.CandidateNode, error) {
 	return results, nil
 }
 
+// evalKeysUnsorted returns the keys of an object without sorting.
+func evalKeysUnsorted(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		switch v := node.Value.(type) {
+		case map[string]any:
+			keys := make([]any, 0, len(v))
+			for k := range v {
+				keys = append(keys, k)
+			}
+			// Don't sort - preserve insertion order (Go map iteration order)
+			results = append(results, types.NewCandidateNode(keys))
+		case []any:
+			// For arrays, return indices
+			keys := make([]any, len(v))
+			for i := range v {
+				keys[i] = float64(i)
+			}
+			results = append(results, types.NewCandidateNode(keys))
+		default:
+			return nil, fmt.Errorf("cannot get keys of %T", node.Value)
+		}
+	}
+
+	return results, nil
+}
+
 // evalValues returns the values of an object or array.
 func evalValues(ctx *types.Context) ([]*types.CandidateNode, error) {
 	var results []*types.CandidateNode
@@ -76,12 +113,7 @@ func evalValues(ctx *types.Context) ([]*types.CandidateNode, error) {
 		case map[string]any:
 			values := make([]any, 0, len(v))
 			// Get keys sorted for consistent output
-			keys := make([]string, 0, len(v))
-			for k := range v {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
+			for _, k := range sortedKeys(v) {
 				values = append(values, v[k])
 			}
 			results = append(results, types.NewCandidateNode(values))
@@ -314,13 +346,7 @@ func evalToEntries(ctx *types.Context) ([]*types.CandidateNode, error) {
 		switch v := node.Value.(type) {
 		case map[string]any:
 			entries := make([]any, 0, len(v))
-			// Get keys sorted for consistent output
-			keys := make([]string, 0, len(v))
-			for k := range v {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
+			for _, k := range sortedKeys(v) {
 				entry := map[string]any{
 					"key":   k,
 					"value": v[k],
@@ -450,17 +476,23 @@ func evalReverse(ctx *types.Context) ([]*types.CandidateNode, error) {
 	var results []*types.CandidateNode
 
 	for _, node := range ctx.MatchingNodes {
-		arr, ok := node.Value.([]any)
-		if !ok {
-			return nil, fmt.Errorf("reverse requires array input, got %T", node.Value)
+		switch v := node.Value.(type) {
+		case []any:
+			reversed := make([]any, len(v))
+			for i, elem := range v {
+				reversed[len(v)-1-i] = elem
+			}
+			results = append(results, types.NewCandidateNode(reversed))
+		case string:
+			// Reverse string by runes
+			runes := []rune(v)
+			for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+				runes[i], runes[j] = runes[j], runes[i]
+			}
+			results = append(results, types.NewCandidateNode(string(runes)))
+		default:
+			return nil, fmt.Errorf("reverse requires array or string input, got %T", node.Value)
 		}
-
-		reversed := make([]any, len(arr))
-		for i, v := range arr {
-			reversed[len(arr)-1-i] = v
-		}
-
-		results = append(results, types.NewCandidateNode(reversed))
 	}
 
 	return results, nil
@@ -606,7 +638,7 @@ func evalUnique(ctx *types.Context) ([]*types.CandidateNode, error) {
 		}
 
 		seen := make(map[string]bool)
-		var unique []any
+		unique := make([]any, 0) // Initialize as empty slice, not nil
 
 		for _, elem := range arr {
 			key := fmt.Sprintf("%v", elem)
@@ -680,7 +712,7 @@ func evalFlatten(ctx *types.Context, depth int) ([]*types.CandidateNode, error) 
 
 // flattenArray recursively flattens an array.
 func flattenArray(arr []any, depth int) []any {
-	var result []any
+	result := make([]any, 0) // Ensure non-nil slice for empty arrays
 
 	for _, elem := range arr {
 		if inner, ok := elem.([]any); ok && depth > 0 {
@@ -703,17 +735,32 @@ func evalHas(keyExpr parser.ExpressionNode, ctx *types.Context) ([]*types.Candid
 	if len(keyResults) == 0 {
 		return nil, fmt.Errorf("has: key expression produced no value")
 	}
-	key, ok := keyResults[0].Value.(string)
-	if !ok {
-		return nil, fmt.Errorf("has: key must be a string, got %T", keyResults[0].Value)
-	}
+	keyVal := keyResults[0].Value
 
 	var results []*types.CandidateNode
 
 	for _, node := range ctx.MatchingNodes {
 		switch v := node.Value.(type) {
 		case map[string]any:
+			key, ok := keyVal.(string)
+			if !ok {
+				results = append(results, types.NewCandidateNode(false))
+				continue
+			}
 			_, exists := v[key]
+			results = append(results, types.NewCandidateNode(exists))
+		case []any:
+			// For arrays, check if index exists
+			idx, ok := toNumber(keyVal)
+			if !ok {
+				results = append(results, types.NewCandidateNode(false))
+				continue
+			}
+			intIdx := int(idx)
+			if intIdx < 0 {
+				intIdx = len(v) + intIdx
+			}
+			exists := intIdx >= 0 && intIdx < len(v)
 			results = append(results, types.NewCandidateNode(exists))
 		default:
 			results = append(results, types.NewCandidateNode(false))
@@ -966,25 +1013,42 @@ func evalMatch(patternExpr parser.ExpressionNode, ctx *types.Context) ([]*types.
 }
 
 // buildCaptures builds the captures array from match indices.
+// convertBackreferences converts jq-style backreferences (\1, \2) to Go style ($1, $2)
+func convertBackreferences(replacement string) string {
+	result := replacement
+	// Convert \0-\9 to $0-$9
+	for i := 9; i >= 0; i-- {
+		old := fmt.Sprintf("\\%d", i)
+		new := fmt.Sprintf("$%d", i)
+		result = strings.ReplaceAll(result, old, new)
+	}
+	return result
+}
+
 func buildCaptures(re *regexp.Regexp, s string, match []int) []any {
 	names := re.SubexpNames()
 	var captures []any
 
 	for i := 1; i < len(match)/2; i++ {
 		start, end := match[i*2], match[i*2+1]
+		// Use null for unnamed groups (empty string in Go)
+		var name any = nil
+		if names[i] != "" {
+			name = names[i]
+		}
 		if start == -1 {
 			captures = append(captures, map[string]any{
 				"offset": float64(-1),
 				"length": float64(0),
 				"string": nil,
-				"name":   names[i],
+				"name":   name,
 			})
 		} else {
 			captures = append(captures, map[string]any{
 				"offset": float64(start),
 				"length": float64(end - start),
 				"string": s[start:end],
-				"name":   names[i],
+				"name":   name,
 			})
 		}
 	}
@@ -1083,11 +1147,14 @@ func evalSub(patternExpr, replacementExpr parser.ExpressionNode, ctx *types.Cont
 		}
 
 		// Replace first match only
-		loc := re.FindStringIndex(s)
-		if loc == nil {
+		// Convert jq-style backreferences to Go style
+		goReplacement := convertBackreferences(replacement)
+		match := re.FindStringSubmatchIndex(s)
+		if match == nil {
 			results = append(results, types.NewCandidateNode(s))
 		} else {
-			result := s[:loc[0]] + replacement + s[loc[1]:]
+			result := string(re.ExpandString(nil, goReplacement, s, match))
+			result = s[:match[0]] + result + s[match[1]:]
 			results = append(results, types.NewCandidateNode(result))
 		}
 	}
@@ -1128,6 +1195,9 @@ func evalGsub(patternExpr, replacementExpr parser.ExpressionNode, ctx *types.Con
 		return nil, fmt.Errorf("gsub: invalid regex: %w", err)
 	}
 
+	// Convert jq-style backreferences (\1, \2) to Go style ($1, $2)
+	goReplacement := convertBackreferences(replacement)
+
 	var results []*types.CandidateNode
 
 	for _, node := range ctx.MatchingNodes {
@@ -1136,7 +1206,7 @@ func evalGsub(patternExpr, replacementExpr parser.ExpressionNode, ctx *types.Con
 			return nil, fmt.Errorf("gsub: input must be a string, got %T", node.Value)
 		}
 
-		result := re.ReplaceAllString(s, replacement)
+		result := re.ReplaceAllString(s, goReplacement)
 		results = append(results, types.NewCandidateNode(result))
 	}
 

@@ -198,3 +198,22 @@ type ReduceNode struct {
 }
 
 func (ReduceNode) expressionNode() {}
+
+// DynamicIndexNode represents dynamic index/key access .[$expr]
+// The index expression is evaluated at runtime to get the key/index
+type DynamicIndexNode struct {
+	Index ExpressionNode // Expression that evaluates to key (string) or index (number)
+	From  ExpressionNode // nil means from current (.)
+}
+
+func (DynamicIndexNode) expressionNode() {}
+
+// DestructureBindNode represents destructuring variable binding
+// e.g., .point as {x: $x, y: $y} | $x + $y
+type DestructureBindNode struct {
+	Expr     ExpressionNode    // The expression to destructure
+	Bindings map[string]string // Maps field name to variable name (without $)
+	Body     ExpressionNode    // The body to evaluate with bindings
+}
+
+func (DestructureBindNode) expressionNode() {}

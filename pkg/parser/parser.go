@@ -102,45 +102,56 @@ func (p *Parser) parseExpressionTokens(tokens []lexer.Token, minPrec int) (Expre
 			}
 
 			// Check for variable or destructuring pattern
-			var varName string
 			if p.isTokenType(rest[0], "Variable") {
-				varName = rest[0].Value[1:] // Remove $
+				varName := rest[0].Value[1:] // Remove $
 				rest = rest[1:]
-			} else if rest[0].Value == "{" {
-				// Skip destructuring for now - just treat as identity
-				// Find matching }
-				depth := 1
-				end := 1
-				for ; end < len(rest) && depth > 0; end++ {
-					if rest[end].Value == "{" {
-						depth++
-					} else if rest[end].Value == "}" {
-						depth--
-					}
+
+				// Expect | after variable
+				if len(rest) == 0 || rest[0].Value != "|" {
+					return nil, nil, fmt.Errorf("expected '|' after variable binding")
 				}
-				rest = rest[end:]
-				varName = "_destructure" // placeholder
+				rest = rest[1:] // consume '|'
+
+				// Parse body (rest of expression)
+				var body ExpressionNode
+				body, rest, err = p.parseExpressionTokens(rest, 0)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				left = &VariableBindNode{
+					Expr:    left,
+					VarName: varName,
+					Body:    body,
+				}
+			} else if rest[0].Value == "{" {
+				// Parse destructuring pattern {key: $var, ...}
+				bindings, newRest, err := p.parseDestructurePattern(rest)
+				if err != nil {
+					return nil, nil, fmt.Errorf("parsing destructure pattern: %w", err)
+				}
+				rest = newRest
+
+				// Expect | after pattern
+				if len(rest) == 0 || rest[0].Value != "|" {
+					return nil, nil, fmt.Errorf("expected '|' after destructure pattern")
+				}
+				rest = rest[1:] // consume '|'
+
+				// Parse body (rest of expression)
+				var body ExpressionNode
+				body, rest, err = p.parseExpressionTokens(rest, 0)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				left = &DestructureBindNode{
+					Expr:     left,
+					Bindings: bindings,
+					Body:     body,
+				}
 			} else {
 				return nil, nil, fmt.Errorf("expected variable after 'as', got %s", rest[0].Value)
-			}
-
-			// Expect | after variable
-			if len(rest) == 0 || rest[0].Value != "|" {
-				return nil, nil, fmt.Errorf("expected '|' after variable binding")
-			}
-			rest = rest[1:] // consume '|'
-
-			// Parse body (rest of expression)
-			var body ExpressionNode
-			body, rest, err = p.parseExpressionTokens(rest, 0)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			left = &VariableBindNode{
-				Expr:    left,
-				VarName: varName,
-				Body:    body,
 			}
 			continue
 		}
@@ -239,9 +250,30 @@ func (p *Parser) parsePrimary(tokens []lexer.Token) (ExpressionNode, []lexer.Tok
 	case tok.Value == "null":
 		return &LiteralNode{Value: nil}, tokens[1:], nil
 
-	// Variable
+	// Variable (may be followed by field access like $u.name)
 	case p.isTokenType(tok, "Variable"):
-		return &VariableNode{Name: tok.Value[1:]}, tokens[1:], nil
+		var node ExpressionNode = &VariableNode{Name: tok.Value[1:]}
+		rest := tokens[1:]
+		// Check for chained field access
+		for len(rest) > 0 && rest[0].Value == "." {
+			rest = rest[1:] // consume .
+			if len(rest) == 0 {
+				return nil, nil, fmt.Errorf("unexpected end of expression after .")
+			}
+			if p.isTokenType(rest[0], "Ident") {
+				node = &FieldAccessNode{Field: rest[0].Value, From: node}
+				rest = rest[1:]
+			} else if rest[0].Value == "[" {
+				var err error
+				node, rest, err = p.parseBracketAccess(node, rest)
+				if err != nil {
+					return nil, nil, err
+				}
+			} else {
+				return nil, nil, fmt.Errorf("expected identifier after ., got %s", rest[0].Value)
+			}
+		}
+		return node, rest, nil
 
 	// Function call or keyword
 	case p.isTokenType(tok, "Ident") || p.isTokenType(tok, "Keyword"):
@@ -401,7 +433,18 @@ func (p *Parser) parseBracketAccess(from ExpressionNode, tokens []lexer.Token) (
 		return &IndexAccessNode{Index: *startIdx, From: from}, rest[1:], nil
 	}
 
-	return nil, nil, fmt.Errorf("unexpected token in bracket expression: %s", rest[0].Value)
+	// Check for dynamic index access .[$var] or .[expr]
+	// Parse the expression inside brackets
+	indexExpr, rest, err := p.parseExpressionTokens(rest, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing bracket expression: %w", err)
+	}
+
+	if len(rest) == 0 || rest[0].Value != "]" {
+		return nil, nil, fmt.Errorf("expected ] after bracket expression")
+	}
+
+	return &DynamicIndexNode{Index: indexExpr, From: from}, rest[1:], nil
 }
 
 // parseParenExpr handles parenthesized expressions
@@ -548,9 +591,40 @@ func (p *Parser) parseObjectFields(tokens []lexer.Token) ([]ObjectFieldNode, err
 			}
 			tokens = tokens[1:]
 		} else if tok.Value == "(" {
-			// Computed key
-			// TODO: implement
-			return nil, fmt.Errorf("computed keys not yet implemented")
+			// Computed key: {(.expr): value}
+			tokens = tokens[1:] // consume (
+
+			// Find matching )
+			depth := 1
+			end := 0
+			for i, t := range tokens {
+				if t.Value == "(" {
+					depth++
+				} else if t.Value == ")" {
+					depth--
+					if depth == 0 {
+						end = i
+						break
+					}
+				}
+			}
+			if depth != 0 {
+				return nil, fmt.Errorf("unmatched parenthesis in computed key")
+			}
+
+			// Parse key expression
+			keyExpr, _, err := p.parseExpressionTokens(tokens[:end], 0)
+			if err != nil {
+				return nil, fmt.Errorf("parsing computed key: %w", err)
+			}
+			key = keyExpr
+			tokens = tokens[end+1:] // skip )
+
+			// Expect :
+			if len(tokens) == 0 || tokens[0].Value != ":" {
+				return nil, fmt.Errorf("expected : after computed key")
+			}
+			tokens = tokens[1:]
 		} else {
 			return nil, fmt.Errorf("unexpected token in object key: %s", tok.Value)
 		}
@@ -819,6 +893,66 @@ func (p *Parser) extractUntilKeywords(tokens []lexer.Token, keywords []string) (
 		}
 	}
 	return nil, nil, ""
+}
+
+// parseDestructurePattern parses a destructuring pattern like {x: $x, y: $y}
+// Returns a map from field name to variable name (without $)
+func (p *Parser) parseDestructurePattern(tokens []lexer.Token) (map[string]string, []lexer.Token, error) {
+	if len(tokens) == 0 || tokens[0].Value != "{" {
+		return nil, nil, fmt.Errorf("expected '{' at start of destructure pattern")
+	}
+	rest := tokens[1:] // consume '{'
+
+	bindings := make(map[string]string)
+
+	for {
+		if len(rest) == 0 {
+			return nil, nil, fmt.Errorf("unexpected end of destructure pattern")
+		}
+
+		// Check for closing brace
+		if rest[0].Value == "}" {
+			rest = rest[1:]
+			break
+		}
+
+		// Parse field name
+		var fieldName string
+		if p.isTokenType(rest[0], "Ident") {
+			fieldName = rest[0].Value
+			rest = rest[1:]
+		} else if p.isTokenType(rest[0], "String") {
+			if len(rest[0].Value) < 2 {
+				return nil, nil, fmt.Errorf("invalid string in destructure pattern")
+			}
+			fieldName = rest[0].Value[1 : len(rest[0].Value)-1]
+			rest = rest[1:]
+		} else {
+			return nil, nil, fmt.Errorf("expected field name in destructure pattern, got %s", rest[0].Value)
+		}
+
+		// Expect colon
+		if len(rest) == 0 || rest[0].Value != ":" {
+			return nil, nil, fmt.Errorf("expected ':' after field name in destructure pattern")
+		}
+		rest = rest[1:] // consume ':'
+
+		// Expect variable
+		if len(rest) == 0 || !p.isTokenType(rest[0], "Variable") {
+			return nil, nil, fmt.Errorf("expected variable after ':' in destructure pattern")
+		}
+		varName := rest[0].Value[1:] // Remove $
+		rest = rest[1:]
+
+		bindings[fieldName] = varName
+
+		// Check for comma or closing brace
+		if len(rest) > 0 && rest[0].Value == "," {
+			rest = rest[1:] // consume ','
+		}
+	}
+
+	return bindings, rest, nil
 }
 
 // parseReduce parses reduce expression

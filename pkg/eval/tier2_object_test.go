@@ -26,8 +26,9 @@ name: "Alice"
 config:
   debug: true
 `),
+			// Keys are sorted alphabetically (config < name)
 			Expression: `to_entries`,
-			Expected:   []string{`[{"key": "name", "value": "Alice"}, {"key": "config", "value": {"debug": true}}]`},
+			Expected:   []string{`[{"key": "config", "value": {"debug": true}}, {"key": "name", "value": "Alice"}]`},
 		},
 		{
 			Description: "to_entries empty object",
