@@ -1,22 +1,52 @@
 # hq - HUML Query Processor
 
-A lightweight command-line HUML processor with jq-compatible syntax.
+A command-line processor for [HUML](https://github.com/huml-lang/go-huml) (Human-Oriented Markup Language) with jq-compatible syntax.
 
 ```bash
-# Extract a field
-hq '.name' config.huml
+# Query a HUML config file
+cat config.huml
+# database:
+#   host: "localhost"
+#   port: 5432
+# features:
+#   - logging
+#   - metrics
 
-# Filter an array
-hq '.users[] | select(.active)' data.huml
+hq '.database.host' config.huml
+# "localhost"
 
-# Transform data
-hq '.items | map({id, name})' data.huml
+hq '.features[]' config.huml
+# "logging"
+# "metrics"
 ```
+
+## What is HUML?
+
+HUML is a human-friendly configuration format that's cleaner than YAML and more readable than JSON:
+
+```huml
+# HUML config example
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+database:
+  url: "postgres://localhost/mydb"
+  pool_size: 10
+
+users:
+  - name: "Alice"
+    role: "admin"
+  - name: "Bob"
+    role: "user"
+```
+
+hq lets you query, filter, and transform HUML data using familiar jq syntax.
 
 ## Installation
 
 ```bash
-go install github.com/rhnvrm/hq@latest
+go install github.com/rhnvrm/hq/cmd/hq@latest
 ```
 
 ## Usage
@@ -24,21 +54,104 @@ go install github.com/rhnvrm/hq@latest
 ```bash
 hq [options] <expression> [file...]
 
+# Query HUML files
+hq '.server.port' config.huml
+
 # Read from stdin
-cat config.huml | hq '.database.host'
+cat config.huml | hq '.database.url'
 
-# Output formats
-hq -o json '.' config.huml    # JSON output
-hq -o yaml '.' config.huml    # YAML output
-hq -r '.name' config.huml     # Raw string (no quotes)
+# Output as different formats
+hq '.' config.huml              # HUML output (default)
+hq -o json '.' config.huml      # JSON output
+hq -o yaml '.' config.huml      # YAML output
+hq -r '.server.host' config.huml # Raw string (no quotes)
+```
 
-# Null input (for generating data)
-hq -n '{name: "test", values: [1,2,3]}'
+## Examples
+
+### Querying Config Files
+
+```bash
+# config.huml:
+# app:
+#   name: "myservice"
+#   version: "1.2.3"
+# database:
+#   primary:
+#     host: "db1.example.com"
+#   replica:
+#     host: "db2.example.com"
+
+# Get nested value
+hq '.database.primary.host' config.huml
+# "db1.example.com"
+
+# Get multiple values
+hq '.database | .primary.host, .replica.host' config.huml
+# "db1.example.com"
+# "db2.example.com"
+```
+
+### Working with Arrays
+
+```bash
+# users.huml:
+# users:
+#   - name: "Alice"
+#     role: "admin"
+#     active: true
+#   - name: "Bob"
+#     role: "user"
+#     active: false
+#   - name: "Carol"
+#     role: "user"
+#     active: true
+
+# List all names
+hq '.users[].name' users.huml
+# "Alice"
+# "Bob"
+# "Carol"
+
+# Filter active users
+hq '.users[] | select(.active) | .name' users.huml
+# "Alice"
+# "Carol"
+
+# Count by role
+hq '.users | group_by(.role) | map({role: .[0].role, count: length})' users.huml
+# [{role: "admin", count: 1}, {role: "user", count: 2}]
+```
+
+### Transforming Data
+
+```bash
+# Transform HUML structure
+hq '.users | map({username: .name, is_admin: (.role == "admin")})' users.huml
+
+# Add/modify fields
+hq '.users[].environment = "production"' users.huml
+
+# Delete fields
+hq 'del(.users[].active)' users.huml
+```
+
+### Converting Formats
+
+```bash
+# HUML to JSON
+hq -o json '.' config.huml > config.json
+
+# JSON to HUML  
+cat config.json | hq '.' > config.huml
+
+# HUML to YAML
+hq -o yaml '.' config.huml > config.yaml
 ```
 
 ## Features
 
-Full jq-compatible expression language including:
+Full jq-compatible expression language:
 
 - **Navigation**: `.`, `.foo`, `.[]`, `.[n]`, `.[n:m]`, `..`
 - **Operators**: `|`, `,`, `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `>`, `and`, `or`, `not`
@@ -51,34 +164,10 @@ Full jq-compatible expression language including:
 
 See [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) for comprehensive examples.
 
-## Examples
-
-```bash
-# Sum numbers
-echo '[1, 2, 3, 4, 5]' | hq 'add'
-# 15
-
-# Filter and transform
-echo '[{"name":"Alice","age":30},{"name":"Bob","age":25}]' | hq '[.[] | select(.age > 26) | .name]'
-# ["Alice"]
-
-# Build object with reduce
-echo '[{"k":"a","v":1},{"k":"b","v":2}]' | hq 'reduce .[] as $x ({}; .[$x.k] = $x.v)'
-# {"a":1,"b":2}
-
-# String interpolation
-echo '{"name":"World"}' | hq '"Hello, \(.name)!"'
-# "Hello, World!"
-
-# Destructuring
-echo '{"point":{"x":10,"y":20}}' | hq '.point as {x:$x,y:$y} | $x + $y'
-# 30
-```
-
 ## Related Projects
 
-- [go-huml](https://github.com/huml-lang/go-huml) - Go library for HUML
-- [jq](https://github.com/jqlang/jq) - JSON processor (inspiration)
+- [go-huml](https://github.com/huml-lang/go-huml) - Go library for HUML parsing
+- [jq](https://github.com/jqlang/jq) - JSON processor (syntax inspiration)
 
 ## License
 
