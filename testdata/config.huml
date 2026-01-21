@@ -1,0 +1,31 @@
+%HUML v0.2.0
+# Sample configuration file for testing
+
+name: "my-app"
+version: "1.0.0"
+debug: false
+
+server:
+  host: "localhost"
+  port: 8080
+  timeout: 30
+
+database:
+  host: "db.example.com"
+  port: 5432
+  name: "mydb"
+  credentials:
+    username: "admin"
+    password: "secret"
+
+features:
+  - "auth"
+  - "logging"
+  - "metrics"
+
+logging:
+  level: "info"
+  format: "json"
+  outputs:
+    - "stdout"
+    - "file"

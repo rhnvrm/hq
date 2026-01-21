@@ -1,0 +1,42 @@
+%HUML v0.2.0
+# Sample user data for testing
+
+users:
+  - id: 1
+    name: "Alice"
+    email: "alice@example.com"
+    age: 30
+    active: true
+    role: "admin"
+    tags:
+      - "developer"
+      - "team-lead"
+
+  - id: 2
+    name: "Bob"
+    email: "bob@example.com"
+    age: 25
+    active: true
+    role: "user"
+    tags:
+      - "developer"
+
+  - id: 3
+    name: "Carol"
+    email: "carol@example.com"
+    age: 35
+    active: false
+    role: "user"
+    tags:
+      - "designer"
+      - "contractor"
+
+  - id: 4
+    name: "David"
+    email: "david@example.com"
+    age: 28
+    active: true
+    role: "admin"
+    tags:
+      - "devops"
+      - "security"

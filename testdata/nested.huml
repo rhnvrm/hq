@@ -1,0 +1,46 @@
+%HUML v0.2.0
+# Deeply nested data for testing recursive operations
+
+root:
+  level1:
+    id: "L1"
+    level2:
+      id: "L2"
+      level3:
+        id: "L3"
+        value: 42
+        items:
+          - id: "item1"
+            data:
+              id: "data1"
+              value: 100
+          - id: "item2"
+            data:
+              id: "data2"
+              value: 200
+
+tree:
+  name: "root"
+  type: "folder"
+  children:
+    - name: "docs"
+      type: "folder"
+      children:
+        - name: "readme.md"
+          type: "file"
+          size: 1024
+        - name: "api.md"
+          type: "file"
+          size: 2048
+    - name: "src"
+      type: "folder"
+      children:
+        - name: "main.go"
+          type: "file"
+          size: 512
+        - name: "lib"
+          type: "folder"
+          children:
+            - name: "utils.go"
+              type: "file"
+              size: 256
