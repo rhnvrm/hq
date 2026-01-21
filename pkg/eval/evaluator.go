@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/huml-lang/hq/pkg/parser"
-	"github.com/huml-lang/hq/pkg/types"
+	"github.com/rhnvrm/hq/pkg/parser"
+	"github.com/rhnvrm/hq/pkg/types"
 )
 
 // sortedKeys returns the keys of a map sorted alphabetically.

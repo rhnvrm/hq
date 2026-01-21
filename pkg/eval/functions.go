@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/huml-lang/hq/pkg/parser"
-	"github.com/huml-lang/hq/pkg/types"
+	"github.com/rhnvrm/hq/pkg/parser"
+	"github.com/rhnvrm/hq/pkg/types"
 )
 
 // evalLength returns the length of an array, string, or object.

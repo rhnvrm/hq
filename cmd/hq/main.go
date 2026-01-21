@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	huml "github.com/huml-lang/go-huml"
-	"github.com/huml-lang/hq/pkg/eval"
+	"github.com/rhnvrm/hq/pkg/eval"
 	"gopkg.in/yaml.v3"
 )
 
