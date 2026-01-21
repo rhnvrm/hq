@@ -1,22 +1,21 @@
-version: "2"
-
-formatters:
-  enable:
-    - gofmt
-
 linters:
-  default: standard
   disable:
     - depguard
 
-  settings:
-    errcheck:
-      exclude-functions:
-        - fmt.Fprint
-        - fmt.Fprintf
-        - fmt.Fprintln
-        - (io.Writer).Write
-    staticcheck:
-      checks:
-        - "all"
-        - "-QF1003"
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - fmt.Fprint
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - (io.Writer).Write
+  staticcheck:
+    checks:
+      - "all"
+      - "-QF1003"
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
