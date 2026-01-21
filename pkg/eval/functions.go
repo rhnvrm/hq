@@ -37,6 +37,12 @@ func evalLength(ctx *types.Context) ([]*types.CandidateNode, error) {
 				absVal = -absVal
 			}
 			results = append(results, types.NewCandidateNode(float64(absVal)))
+		case int64:
+			absVal := v
+			if absVal < 0 {
+				absVal = -absVal
+			}
+			results = append(results, types.NewCandidateNode(float64(absVal)))
 		default:
 			return nil, fmt.Errorf("cannot get length of %T", node.Value)
 		}

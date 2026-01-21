@@ -118,17 +118,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// parseInput tries to parse input as JSON, YAML, or HUML
+// parseInput tries to parse input as HUML, JSON, or YAML
 func parseInput(data []byte, v *any) error {
 	text := strings.TrimSpace(string(data))
 
-	// Try JSON first (most common for piping)
-	if err := json.Unmarshal([]byte(text), v); err == nil {
+	// Try HUML first (native format for hq)
+	if err := huml.Unmarshal([]byte(text), v); err == nil {
 		return nil
 	}
 
-	// Try HUML (native format)
-	if err := huml.Unmarshal([]byte(text), v); err == nil {
+	// Try JSON (common for piping)
+	if err := json.Unmarshal([]byte(text), v); err == nil {
 		return nil
 	}
 
@@ -137,7 +137,7 @@ func parseInput(data []byte, v *any) error {
 		return nil
 	}
 
-	return fmt.Errorf("could not parse as JSON, HUML, or YAML")
+	return fmt.Errorf("could not parse as HUML, JSON, or YAML")
 }
 
 // outputValue formats and writes a single result
