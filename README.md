@@ -51,6 +51,29 @@ hq lets you query, filter, and transform HUML data using familiar jq syntax. It 
 
 ## Installation
 
+### Pre-built Binaries
+
+Download from [GitHub Releases](https://github.com/rhnvrm/hq/releases/latest):
+
+| Platform | Architecture | Download |
+|----------|--------------|----------|
+| Linux | x86_64 | `hq_VERSION_linux_x86_64.tar.gz` |
+| Linux | arm64 | `hq_VERSION_linux_arm64.tar.gz` |
+| macOS | Apple Silicon | `hq_VERSION_darwin_arm64.tar.gz` |
+| macOS | Intel | `hq_VERSION_darwin_x86_64.tar.gz` |
+| Windows | x86_64 | `hq_VERSION_windows_x86_64.zip` |
+| Windows | arm64 | `hq_VERSION_windows_arm64.zip` |
+
+```bash
+# Example: Linux x86_64
+tar xzf hq_*_linux_x86_64.tar.gz
+sudo mv hq /usr/local/bin/
+```
+
+### From Source
+
+Requires Go 1.21+:
+
 ```bash
 go install github.com/rhnvrm/hq/cmd/hq@latest
 ```
