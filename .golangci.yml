@@ -1,0 +1,22 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
+
+linters:
+  default: standard
+  disable:
+    - depguard
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Writer).Write
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1003"

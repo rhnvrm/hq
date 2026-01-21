@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -243,31 +242,4 @@ Examples:
   echo 'name: Alice' | hq -o json '.'
 `
 	fmt.Fprint(w, help)
-}
-
-// For interactive use
-func runInteractive(stdin io.Reader, stdout, stderr io.Writer) error {
-	scanner := bufio.NewScanner(stdin)
-	fmt.Fprintln(stdout, "hq interactive mode. Enter expressions (Ctrl+D to exit):")
-	fmt.Fprint(stdout, "> ")
-
-	for scanner.Scan() {
-		expr := strings.TrimSpace(scanner.Text())
-		if expr == "" {
-			fmt.Fprint(stdout, "> ")
-			continue
-		}
-
-		results, err := eval.Evaluate(expr, nil)
-		if err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
-		} else {
-			for _, r := range results {
-				outputValue(stdout, r, "huml", false, false)
-			}
-		}
-		fmt.Fprint(stdout, "> ")
-	}
-
-	return scanner.Err()
 }

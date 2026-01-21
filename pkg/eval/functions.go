@@ -1435,8 +1435,8 @@ func evalJoin(delimExpr parser.ExpressionNode, ctx *types.Context) ([]*types.Can
 	return results, nil
 }
 
-// evalAsciiDowncase converts a string to lowercase.
-func evalAsciiDowncase(ctx *types.Context) ([]*types.CandidateNode, error) {
+// evalASCIIDowncase converts a string to lowercase.
+func evalASCIIDowncase(ctx *types.Context) ([]*types.CandidateNode, error) {
 	var results []*types.CandidateNode
 
 	for _, node := range ctx.MatchingNodes {
@@ -1451,8 +1451,8 @@ func evalAsciiDowncase(ctx *types.Context) ([]*types.CandidateNode, error) {
 	return results, nil
 }
 
-// evalAsciiUpcase converts a string to uppercase.
-func evalAsciiUpcase(ctx *types.Context) ([]*types.CandidateNode, error) {
+// evalASCIIUpcase converts a string to uppercase.
+func evalASCIIUpcase(ctx *types.Context) ([]*types.CandidateNode, error) {
 	var results []*types.CandidateNode
 
 	for _, node := range ctx.MatchingNodes {

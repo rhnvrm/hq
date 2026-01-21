@@ -1670,9 +1670,7 @@ func evalPathExpr(expr parser.ExpressionNode, ctx *types.Context) ([]*types.Cand
 
 	// Convert path to array format
 	pathArr := make([]any, len(path))
-	for i, p := range path {
-		pathArr[i] = p
-	}
+	copy(pathArr, path)
 
 	return []*types.CandidateNode{types.NewCandidateNode(pathArr)}, nil
 }
@@ -2399,9 +2397,9 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 		}
 		return evalJoin(n.Args[0], ctx)
 	case "ascii_downcase":
-		return evalAsciiDowncase(ctx)
+		return evalASCIIDowncase(ctx)
 	case "ascii_upcase":
-		return evalAsciiUpcase(ctx)
+		return evalASCIIUpcase(ctx)
 	case "startswith":
 		if len(n.Args) != 1 {
 			return nil, fmt.Errorf("startswith requires 1 argument")

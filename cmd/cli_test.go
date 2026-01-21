@@ -1,10 +1,6 @@
 package cmd
 
 import (
-	"bytes"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -18,13 +14,6 @@ type CLIScenario struct {
 	Expected      string
 	ExpectedError string
 	ExitCode      int
-}
-
-// runCLI executes the hq CLI with given arguments and returns output
-// TODO: Implement this once the CLI is built
-func runCLI(args []string, stdin string) (stdout, stderr string, exitCode int) {
-	// Placeholder - will be implemented when CLI is built
-	return "", "not implemented", 1
 }
 
 // testCLIScenario runs a single CLI test scenario
@@ -227,32 +216,4 @@ func TestCLIVariables(t *testing.T) {
 	for _, s := range variableCLIScenarios {
 		testCLIScenario(t, &s)
 	}
-}
-
-// Helper functions for creating temp files in tests
-func createTempFile(t *testing.T, name, content string) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to create temp file: %v", err)
-	}
-	return path
-}
-
-// Helpers for comparing output
-func normalizeOutput(s string) string {
-	return strings.TrimSpace(s)
-}
-
-func outputMatches(expected, actual string) bool {
-	return normalizeOutput(expected) == normalizeOutput(actual)
-}
-
-// Buffer helpers
-func captureOutput(fn func()) (stdout, stderr string) {
-	var outBuf, errBuf bytes.Buffer
-	// TODO: capture actual output when CLI is implemented
-	fn()
-	return outBuf.String(), errBuf.String()
 }

@@ -67,11 +67,9 @@ func (p *Parser) parseExpression(tokens []lexer.Token, minPrec int) (ExpressionN
 		return nil, err
 	}
 
-	// Check for unparsed tokens (errors)
-	if len(rest) > 0 {
-		// Some remaining tokens may be valid in certain contexts
-		// For now, we'll just return what we have
-	}
+	// Note: remaining tokens (rest) may be valid in certain contexts
+	// For now, we just return what we have parsed
+	_ = rest
 
 	return result, nil
 }
@@ -258,7 +256,7 @@ func (p *Parser) parsePrimary(tokens []lexer.Token) (ExpressionNode, []lexer.Tok
 		for len(rest) > 0 && rest[0].Value == "." {
 			rest = rest[1:] // consume .
 			if len(rest) == 0 {
-				return nil, nil, fmt.Errorf("unexpected end of expression after .")
+				return nil, nil, fmt.Errorf("unexpected end of expression after dot")
 			}
 			if p.isTokenType(rest[0], "Ident") {
 				node = &FieldAccessNode{Field: rest[0].Value, From: node}
@@ -313,7 +311,7 @@ func (p *Parser) parseDotExpression(tokens []lexer.Token) (ExpressionNode, []lex
 			// Consume the .
 			rest = rest[1:]
 			if len(rest) == 0 {
-				return nil, nil, fmt.Errorf("unexpected end of expression after .")
+				return nil, nil, fmt.Errorf("unexpected end of expression after dot")
 			}
 			// Next token should be an identifier or [
 			nextTok := rest[0]

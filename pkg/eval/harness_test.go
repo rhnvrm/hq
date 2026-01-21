@@ -25,8 +25,8 @@ func testScenario(t *testing.T, s *Scenario) {
 	t.Run(name, func(t *testing.T) {
 		// Set environment variables if specified
 		for k, v := range s.EnvVars {
-			os.Setenv(k, v)
-			defer os.Unsetenv(k)
+			_ = os.Setenv(k, v)
+			defer func(key string) { _ = os.Unsetenv(key) }(k)
 		}
 
 		// Parse the input document
