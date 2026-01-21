@@ -14,6 +14,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Version information set by GoReleaser
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "hq: %v\n", err)
@@ -51,7 +58,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			printHelp(stdout)
 			return nil
 		case "-V", "--version":
-			fmt.Fprintln(stdout, "hq version 0.1.0")
+			fmt.Fprintf(stdout, "hq %s (%s) built %s\n", version, commit, date)
 			return nil
 		default:
 			if strings.HasPrefix(arg, "-") {
