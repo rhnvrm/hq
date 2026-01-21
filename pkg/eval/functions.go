@@ -1024,6 +1024,149 @@ func evalGsub(patternExpr, replacementExpr parser.ExpressionNode, ctx *types.Con
 	return results, nil
 }
 
+// evalGroupBy groups array elements by a key expression.
+func evalGroupBy(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("group_by requires array input, got %T", node.Value)
+		}
+
+		if len(arr) == 0 {
+			results = append(results, types.NewCandidateNode([]any{}))
+			continue
+		}
+
+		// Group elements by key
+		groups := make(map[string][]any)
+		var keyOrder []string
+
+		for _, elem := range arr {
+			// Evaluate key expression
+			elemCtx := ctx.Clone()
+			elemCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(elem)})
+
+			keyResults, err := evaluate(expr, elemCtx)
+			if err != nil {
+				return nil, err
+			}
+			if len(keyResults) == 0 {
+				continue
+			}
+
+			// Convert key to string for grouping
+			keyStr := fmt.Sprintf("%v", keyResults[0].Value)
+			if _, exists := groups[keyStr]; !exists {
+				keyOrder = append(keyOrder, keyStr)
+			}
+			groups[keyStr] = append(groups[keyStr], elem)
+		}
+
+		// Build result array preserving order
+		grouped := make([]any, 0, len(groups))
+		for _, key := range keyOrder {
+			grouped = append(grouped, groups[key])
+		}
+
+		results = append(results, types.NewCandidateNode(grouped))
+	}
+
+	return results, nil
+}
+
+// evalMapValues transforms only the values of an object (keeps keys).
+func evalMapValues(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		obj, ok := node.Value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("map_values requires object input, got %T", node.Value)
+		}
+
+		result := make(map[string]any)
+		for k, v := range obj {
+			// Evaluate expression with value as input
+			valCtx := ctx.Clone()
+			valCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(v)})
+
+			valResults, err := evaluate(expr, valCtx)
+			if err != nil {
+				return nil, err
+			}
+			if len(valResults) > 0 {
+				result[k] = valResults[0].Value
+			}
+		}
+
+		results = append(results, types.NewCandidateNode(result))
+	}
+
+	return results, nil
+}
+
+// evalToString converts a value to string.
+func evalToString(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		var str string
+		switch v := node.Value.(type) {
+		case string:
+			str = v
+		case float64:
+			if v == float64(int64(v)) {
+				str = fmt.Sprintf("%d", int64(v))
+			} else {
+				str = fmt.Sprintf("%v", v)
+			}
+		case int:
+			str = fmt.Sprintf("%d", v)
+		case int64:
+			str = fmt.Sprintf("%d", v)
+		case bool:
+			str = fmt.Sprintf("%v", v)
+		case nil:
+			str = "null"
+		default:
+			str = fmt.Sprintf("%v", v)
+		}
+		results = append(results, types.NewCandidateNode(str))
+	}
+
+	return results, nil
+}
+
+// evalToNumber converts a value to number.
+func evalToNumber(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		switch v := node.Value.(type) {
+		case float64:
+			results = append(results, types.NewCandidateNode(v))
+		case int:
+			results = append(results, types.NewCandidateNode(float64(v)))
+		case int64:
+			results = append(results, types.NewCandidateNode(float64(v)))
+		case string:
+			// Try to parse as number
+			var f float64
+			_, err := fmt.Sscanf(v, "%f", &f)
+			if err != nil {
+				return nil, fmt.Errorf("cannot convert %q to number", v)
+			}
+			results = append(results, types.NewCandidateNode(f))
+		default:
+			return nil, fmt.Errorf("cannot convert %T to number", node.Value)
+		}
+	}
+
+	return results, nil
+}
+
 // evalSplit splits a string by a delimiter.
 func evalSplit(delimExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
 	// Evaluate delimiter

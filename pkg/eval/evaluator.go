@@ -1007,6 +1007,20 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 			return nil, fmt.Errorf("error")
 		}
 		return nil, fmt.Errorf("error takes 0 or 1 argument")
+	case "group_by":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("group_by requires 1 argument")
+		}
+		return evalGroupBy(n.Args[0], ctx)
+	case "map_values":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("map_values requires 1 argument")
+		}
+		return evalMapValues(n.Args[0], ctx)
+	case "tostring":
+		return evalToString(ctx)
+	case "tonumber":
+		return evalToNumber(ctx)
 	case "split":
 		if len(n.Args) != 1 {
 			return nil, fmt.Errorf("split requires 1 argument")
