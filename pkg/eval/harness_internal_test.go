@@ -125,9 +125,9 @@ func TestCompareValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := compareValues(t, tt.expected, tt.actual)
+			got := compareStringValues(t, tt.expected, tt.actual)
 			if got != tt.want {
-				t.Errorf("compareValues(%q, %q) = %v, want %v", tt.expected, tt.actual, got, tt.want)
+				t.Errorf("compareStringValues(%q, %q) = %v, want %v", tt.expected, tt.actual, got, tt.want)
 			}
 		})
 	}
@@ -174,9 +174,9 @@ func TestCompareResults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := compareResults(t, tt.expected, tt.actual)
+			got := compareResultStrings(t, tt.expected, tt.actual)
 			if got != tt.want {
-				t.Errorf("compareResults(%v, %v) = %v, want %v", tt.expected, tt.actual, got, tt.want)
+				t.Errorf("compareResultStrings(%v, %v) = %v, want %v", tt.expected, tt.actual, got, tt.want)
 			}
 		})
 	}

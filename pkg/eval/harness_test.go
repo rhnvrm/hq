@@ -1,12 +1,15 @@
 package eval
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/knadh/koanf/parsers/json"
+	gohuml "github.com/huml-lang/go-huml"
+	"gopkg.in/yaml.v3"
 )
 
 // testScenario runs a single scenario test.
@@ -26,37 +29,84 @@ func testScenario(t *testing.T, s *Scenario) {
 			defer os.Unsetenv(k)
 		}
 
-		// TODO: Implementation
-		// 1. Parse the expression using the parser package
-		// expr, err := parser.Parse(s.Expression)
-		//
-		// 2. Parse the input document(s) using go-huml
-		// doc, err := huml.Unmarshal([]byte(s.Document))
-		//
-		// 3. Evaluate the expression
-		// results, err := eval.Evaluate(expr, doc)
-		//
-		// 4. Compare results with expected using semantic comparison
-		// if s.ExpectedError != "" {
-		//     if err == nil || !strings.Contains(err.Error(), s.ExpectedError) {
-		//         t.Errorf("expected error containing %q, got %v", s.ExpectedError, err)
-		//     }
-		// } else {
-		//     if err != nil {
-		//         t.Fatalf("unexpected error: %v", err)
-		//     }
-		//     if !compareResults(t, s.Expected, results) {
-		//         t.Errorf("result mismatch\nexpected: %v\ngot: %v", s.Expected, results)
-		//     }
-		// }
+		// Parse the input document
+		// Try JSON first, then YAML (for test convenience), then HUML
+		var input any
+		if s.Document != "" {
+			doc := strings.TrimSpace(s.Document)
 
-		// For now, mark as skipped until implementation exists
+			// Try JSON first
+			if err := json.Unmarshal([]byte(doc), &input); err != nil {
+				// Try YAML as second option (more flexible, supports nested syntax)
+				if err2 := yaml.Unmarshal([]byte(doc), &input); err2 != nil {
+					// Try HUML as final fallback
+					if err3 := gohuml.Unmarshal([]byte(doc), &input); err3 != nil {
+						t.Fatalf("failed to parse input document (JSON: %v, YAML: %v, HUML: %v)", err, err2, err3)
+					}
+				}
+			}
+		}
+
+		// Evaluate the expression
+		results, err := Evaluate(s.Expression, input)
+
+		// Check for expected error
 		if s.ExpectedError != "" {
-			t.Skipf("TODO: implement expression evaluation (expecting error: %s)", s.ExpectedError)
-		} else {
-			t.Skipf("TODO: implement expression evaluation (expecting: %v)", s.Expected)
+			if err == nil {
+				t.Errorf("expected error containing %q, got no error (result: %v)", s.ExpectedError, results)
+			} else if !strings.Contains(err.Error(), s.ExpectedError) {
+				t.Errorf("expected error containing %q, got %v", s.ExpectedError, err)
+			}
+			return
+		}
+
+		// Check for unexpected error
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Convert results to strings for comparison
+		actualStrings := make([]string, len(results))
+		for i, result := range results {
+			actualStrings[i] = valueToString(result)
+		}
+
+		// Compare results
+		if !compareResultStrings(t, s.Expected, actualStrings) {
+			t.Errorf("result mismatch\nexpression: %s\nexpected: %v\ngot: %v", s.Expression, s.Expected, actualStrings)
 		}
 	})
+}
+
+// valueToString converts a value to its JSON string representation for comparison.
+func valueToString(v any) string {
+	if v == nil {
+		return "null"
+	}
+
+	switch val := v.(type) {
+	case string:
+		// Quote strings
+		b, _ := json.Marshal(val)
+		return string(b)
+	case float64:
+		// Format numbers nicely (no trailing .0 for integers)
+		if val == float64(int64(val)) {
+			return fmt.Sprintf("%d", int64(val))
+		}
+		return fmt.Sprintf("%v", val)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case []any, map[string]any:
+		// Use JSON for complex types
+		b, _ := json.Marshal(val)
+		return string(b)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 // runScenarios runs all scenarios in a group.
@@ -72,27 +122,27 @@ func huml(s string) string {
 	return strings.TrimPrefix(s, "\n")
 }
 
-// compareResults performs semantic comparison of expected vs actual results.
-// It uses koanf to normalize different formats (JSON, HUML) to a common representation.
-// This allows tests to use either JSON or HUML syntax in Expected values.
-func compareResults(t *testing.T, expected []string, actual []string) bool {
+// compareResultStrings performs semantic comparison of expected vs actual results.
+func compareResultStrings(t *testing.T, expected []string, actual []string) bool {
 	t.Helper()
 
 	if len(expected) != len(actual) {
+		t.Logf("length mismatch: expected %d, got %d", len(expected), len(actual))
 		return false
 	}
 
 	for i := range expected {
-		if !compareValues(t, expected[i], actual[i]) {
+		if !compareStringValues(t, expected[i], actual[i]) {
+			t.Logf("value mismatch at index %d: expected %q, got %q", i, expected[i], actual[i])
 			return false
 		}
 	}
 	return true
 }
 
-// compareValues compares two values semantically.
+// compareStringValues compares two string values semantically.
 // Handles scalars (strings, numbers, booleans, null) and complex types (objects, arrays).
-func compareValues(t *testing.T, expected, actual string) bool {
+func compareStringValues(t *testing.T, expected, actual string) bool {
 	t.Helper()
 
 	expected = strings.TrimSpace(expected)
@@ -100,8 +150,8 @@ func compareValues(t *testing.T, expected, actual string) bool {
 
 	// Try to parse as complex types first (objects/arrays)
 	// If both parse successfully, compare semantically
-	expectedVal, expectedErr := parseValue(expected)
-	actualVal, actualErr := parseValue(actual)
+	expectedVal, expectedErr := parseStringValue(expected)
+	actualVal, actualErr := parseStringValue(actual)
 
 	if expectedErr == nil && actualErr == nil {
 		// Both are parseable - compare semantically
@@ -112,9 +162,9 @@ func compareValues(t *testing.T, expected, actual string) bool {
 	return expected == actual
 }
 
-// parseValue attempts to parse a string as JSON (which covers most cases).
+// parseStringValue attempts to parse a string as JSON or HUML.
 // Returns the parsed value or an error if not parseable.
-func parseValue(s string) (any, error) {
+func parseStringValue(s string) (any, error) {
 	s = strings.TrimSpace(s)
 
 	// Handle simple scalars that aren't valid JSON on their own
@@ -128,35 +178,28 @@ func parseValue(s string) (any, error) {
 		return false, nil
 	}
 
-	// Try parsing as JSON (handles objects, arrays, strings, numbers)
-	parser := json.Parser()
-
-	// Arrays need special handling - wrap to parse via koanf's map-based parser
-	if strings.HasPrefix(s, "[") {
-		wrapped := `{"_":` + s + `}`
-		data, err := parser.Unmarshal([]byte(wrapped))
-		if err != nil {
-			return nil, err
+	// Try parsing as JSON first (handles objects, arrays, strings, numbers)
+	if strings.HasPrefix(s, "[") || strings.HasPrefix(s, "{") || strings.HasPrefix(s, "\"") {
+		var val any
+		if err := json.Unmarshal([]byte(s), &val); err == nil {
+			return val, nil
 		}
-		return data["_"], nil
 	}
 
-	// Objects can be parsed directly
-	if strings.HasPrefix(s, "{") {
-		data, err := parser.Unmarshal([]byte(s))
-		if err != nil {
-			return nil, err
-		}
-		return data, nil
+	// Try parsing as HUML
+	var val any
+	if err := gohuml.Unmarshal([]byte(s), &val); err == nil {
+		return val, nil
 	}
 
-	// Bare values (strings, numbers) - wrap to parse
-	wrapped := `{"_":` + s + `}`
-	data, err := parser.Unmarshal([]byte(wrapped))
-	if err != nil {
-		return nil, err
+	// Try bare number
+	var num float64
+	if _, err := fmt.Sscanf(s, "%f", &num); err == nil {
+		return num, nil
 	}
-	return data["_"], nil
+
+	// Return as string
+	return s, nil
 }
 
 // normalizeValue converts numeric types for consistent comparison.

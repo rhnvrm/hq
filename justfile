@@ -181,3 +181,127 @@ loc:
 # Show project structure
 tree:
     @find . -type f -name "*.go" -o -name "*.huml" -o -name "justfile" | grep -v ".git" | sort
+
+# ============================================================================
+# Agent Verification (@verify and @review support)
+# ============================================================================
+
+# Verify a specific checkpoint (for @verify agent)
+# Usage: just verify-checkpoint Identity
+verify-checkpoint CHECKPOINT:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== Verifying Checkpoint: {{CHECKPOINT}} ==="
+    
+    result=$(go test ./pkg/eval -run "{{CHECKPOINT}}" -v 2>&1)
+    
+    # Count results
+    passed=$(echo "$result" | grep -c "PASS:" || true)
+    skipped=$(echo "$result" | grep -c "SKIP:" || true)
+    failed=$(echo "$result" | grep -c "FAIL:" || true)
+    
+    echo ""
+    echo "Results: $passed passed, $skipped skipped, $failed failed"
+    echo ""
+    
+    if [ "$failed" -gt 0 ]; then
+        echo "CHECKPOINT FAILED - see failures above"
+        echo "$result" | grep -A5 "FAIL:" || true
+        exit 1
+    elif [ "$skipped" -gt 0 ] && [ "$passed" -eq 0 ]; then
+        echo "CHECKPOINT NOT STARTED - all tests still pending"
+        exit 1
+    elif [ "$skipped" -gt 0 ]; then
+        echo "CHECKPOINT PARTIAL - $passed passing, $skipped still pending"
+        exit 0
+    else
+        echo "CHECKPOINT COMPLETE - all $passed tests passing"
+        exit 0
+    fi
+
+# Run all verification checks (for @verify agent full check)
+verify-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== Full Verification ==="
+    
+    # Check code compiles
+    echo "1. Checking compilation..."
+    go build ./... || { echo "FAIL: Code does not compile"; exit 1; }
+    
+    # Run all tests
+    echo "2. Running all tests..."
+    result=$(go test ./... -v 2>&1)
+    
+    failed=$(echo "$result" | grep -c "^--- FAIL:" || true)
+    if [ "$failed" -gt 0 ]; then
+        echo "FAIL: $failed test failures"
+        echo "$result" | grep -A10 "^--- FAIL:" || true
+        exit 1
+    fi
+    
+    # Show progress
+    echo "3. Progress report:"
+    just progress
+    
+    echo ""
+    echo "VERIFICATION PASSED"
+
+# Quick lint check (for @review agent)
+review-lint:
+    #!/usr/bin/env bash
+    echo "=== Code Quality Check ==="
+    
+    # Check formatting
+    echo "1. Checking format..."
+    unformatted=$(gofmt -l .)
+    if [ -n "$unformatted" ]; then
+        echo "WARN: Unformatted files:"
+        echo "$unformatted"
+    fi
+    
+    # Run vet
+    echo "2. Running go vet..."
+    go vet ./... || { echo "WARN: go vet found issues"; }
+    
+    # Check for common issues
+    echo "3. Checking for common issues..."
+    
+    # Check for TODO comments in implementation files (not tests)
+    todos=$(grep -rn "TODO" --include="*.go" --exclude="*_test.go" . 2>/dev/null | head -10 || true)
+    if [ -n "$todos" ]; then
+        echo "INFO: TODOs found:"
+        echo "$todos"
+    fi
+    
+    echo ""
+    echo "REVIEW CHECK COMPLETE"
+
+# Show implementation status by operator (for tracking)
+status:
+    #!/usr/bin/env bash
+    echo "=== Operator Implementation Status ==="
+    echo ""
+    
+    result=$(go test ./pkg/eval -v 2>&1)
+    
+    # Parse test groups and show status
+    for group in identity field-access array-access slice iterator pipe select comparison boolean arithmetic construction assignment functions array string regex object conditionals path error; do
+        passed=$(echo "$result" | grep -i "$group" | grep -c "PASS:" || true)
+        skipped=$(echo "$result" | grep -i "$group" | grep -c "SKIP:" || true)
+        failed=$(echo "$result" | grep -i "$group" | grep -c "FAIL:" || true)
+        total=$((passed + skipped + failed))
+        
+        if [ "$total" -gt 0 ]; then
+            if [ "$failed" -gt 0 ]; then
+                status="FAILING"
+            elif [ "$skipped" -gt 0 ] && [ "$passed" -eq 0 ]; then
+                status="PENDING"
+            elif [ "$skipped" -gt 0 ]; then
+                status="PARTIAL"
+            else
+                status="DONE"
+            fi
+            printf "  %-20s %s (%d/%d)\n" "$group" "$status" "$passed" "$total"
+        fi
+    done
