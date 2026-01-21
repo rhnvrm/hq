@@ -848,6 +848,37 @@ func evalTypeFilter(ctx *types.Context, typeName string) ([]*types.CandidateNode
 	return results, nil
 }
 
+// evalScalarsFilter filters for scalar values (not arrays or objects).
+func evalScalarsFilter(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		switch node.Value.(type) {
+		case []any, map[string]any:
+			// Not a scalar
+			continue
+		default:
+			results = append(results, node)
+		}
+	}
+
+	return results, nil
+}
+
+// evalIterablesFilter filters for iterable values (arrays or objects).
+func evalIterablesFilter(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		switch node.Value.(type) {
+		case []any, map[string]any:
+			results = append(results, node)
+		}
+	}
+
+	return results, nil
+}
+
 // evalTest tests if a string matches a regex pattern.
 func evalTest(patternExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
 	// Evaluate pattern

@@ -186,6 +186,12 @@ func parseStringValue(s string) (any, error) {
 		}
 	}
 
+	// Try YAML (more flexible, handles HUML-like syntax)
+	var yamlVal any
+	if err := yaml.Unmarshal([]byte(s), &yamlVal); err == nil {
+		return yamlVal, nil
+	}
+
 	// Try parsing as HUML
 	var val any
 	if err := gohuml.Unmarshal([]byte(s), &val); err == nil {

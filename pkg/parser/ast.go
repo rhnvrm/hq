@@ -174,3 +174,27 @@ type RecursiveDescentNode struct {
 }
 
 func (RecursiveDescentNode) expressionNode() {}
+
+// StringInterpolationNode represents a string with embedded expressions
+// e.g., "Hello, \(.name)!" has parts: ["Hello, ", expr(.name), "!"]
+type StringInterpolationNode struct {
+	Parts []StringPart
+}
+
+func (StringInterpolationNode) expressionNode() {}
+
+// StringPart is either a literal string or an expression to interpolate
+type StringPart struct {
+	Literal string         // Non-empty if this is a literal part
+	Expr    ExpressionNode // Non-nil if this is an expression part
+}
+
+// ReduceNode represents reduce expression: reduce EXPR as $VAR (INIT; UPDATE)
+type ReduceNode struct {
+	Expr    ExpressionNode // The iterator expression (e.g., .[])
+	VarName string         // Variable name (without $)
+	Init    ExpressionNode // Initial accumulator value
+	Update  ExpressionNode // Update expression
+}
+
+func (ReduceNode) expressionNode() {}

@@ -219,10 +219,15 @@ func (p *Parser) parsePrimary(tokens []lexer.Token) (ExpressionNode, []lexer.Tok
 	case tok.Value == "..":
 		return &RecursiveDescentNode{From: nil}, tokens[1:], nil
 
-	// String literal
+	// String literal (may contain interpolation)
 	case p.isTokenType(tok, "String"):
-		// Remove quotes and unescape
+		// Remove quotes
 		s := tok.Value[1 : len(tok.Value)-1]
+		// Check for interpolation \(...)
+		if strings.Contains(s, `\(`) {
+			return p.parseStringInterpolation(s, tokens[1:])
+		}
+		// Plain string - unescape
 		s = unescapeString(s)
 		return &LiteralNode{Value: s}, tokens[1:], nil
 
@@ -604,6 +609,8 @@ func (p *Parser) parseFunctionOrKeyword(tokens []lexer.Token) (ExpressionNode, [
 		return p.parseConditional(rest)
 	case "try":
 		return p.parseTryCatch(rest)
+	case "reduce":
+		return p.parseReduce(rest)
 	case "empty":
 		return &FunctionCallNode{Name: "empty", Args: nil}, rest, nil
 	case "not":
@@ -814,6 +821,99 @@ func (p *Parser) extractUntilKeywords(tokens []lexer.Token, keywords []string) (
 	return nil, nil, ""
 }
 
+// parseReduce parses reduce expression
+// Format: reduce EXPR as $VAR (INIT; UPDATE)
+func (p *Parser) parseReduce(tokens []lexer.Token) (ExpressionNode, []lexer.Token, error) {
+	// Parse iterator expression until 'as'
+	exprTokens, rest := p.extractUntilKeyword(tokens, "as")
+	if rest == nil {
+		return nil, nil, fmt.Errorf("expected 'as' in reduce expression")
+	}
+
+	// Parse the iterator expression
+	expr, _, err := p.parseExpressionTokens(exprTokens, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing reduce iterator: %w", err)
+	}
+
+	// Skip 'as'
+	rest = rest[1:]
+
+	// Expect variable
+	if len(rest) == 0 || !p.isTokenType(rest[0], "Variable") {
+		return nil, nil, fmt.Errorf("expected variable after 'as' in reduce")
+	}
+	varName := rest[0].Value[1:] // Remove $
+	rest = rest[1:]
+
+	// Expect (
+	if len(rest) == 0 || rest[0].Value != "(" {
+		return nil, nil, fmt.Errorf("expected '(' after variable in reduce")
+	}
+	rest = rest[1:]
+
+	// Find matching )
+	depth := 1
+	end := 0
+	for i, tok := range rest {
+		if tok.Value == "(" {
+			depth++
+		} else if tok.Value == ")" {
+			depth--
+			if depth == 0 {
+				end = i
+				break
+			}
+		}
+	}
+	if depth != 0 {
+		return nil, nil, fmt.Errorf("unmatched parenthesis in reduce")
+	}
+
+	// Split by ; to get init and update
+	inner := rest[:end]
+	var initTokens, updateTokens []lexer.Token
+
+	semicolonDepth := 0
+	splitIdx := -1
+	for i, tok := range inner {
+		if tok.Value == "(" || tok.Value == "[" || tok.Value == "{" {
+			semicolonDepth++
+		} else if tok.Value == ")" || tok.Value == "]" || tok.Value == "}" {
+			semicolonDepth--
+		} else if semicolonDepth == 0 && tok.Value == ";" {
+			splitIdx = i
+			break
+		}
+	}
+
+	if splitIdx == -1 {
+		return nil, nil, fmt.Errorf("expected ';' in reduce (init; update)")
+	}
+
+	initTokens = inner[:splitIdx]
+	updateTokens = inner[splitIdx+1:]
+
+	// Parse init
+	initExpr, _, err := p.parseExpressionTokens(initTokens, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing reduce init: %w", err)
+	}
+
+	// Parse update
+	updateExpr, _, err := p.parseExpressionTokens(updateTokens, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing reduce update: %w", err)
+	}
+
+	return &ReduceNode{
+		Expr:    expr,
+		VarName: varName,
+		Init:    initExpr,
+		Update:  updateExpr,
+	}, rest[end+1:], nil
+}
+
 // parseTryCatch parses try-catch
 // Format: try EXPR [catch EXPR]
 func (p *Parser) parseTryCatch(tokens []lexer.Token) (ExpressionNode, []lexer.Token, error) {
@@ -867,6 +967,8 @@ func (p *Parser) parseTryCatch(tokens []lexer.Token) (ExpressionNode, []lexer.To
 // getOperatorPrecedence returns the precedence and right-associativity of an operator
 func (p *Parser) getOperatorPrecedence(op string) (int, bool) {
 	switch op {
+	case "=", "|=", "+=", "-=", "*=", "//=":
+		return 0, true // Assignment has lowest precedence, right-associative
 	case "|":
 		return 1, false
 	case ",":
@@ -905,6 +1007,8 @@ func (p *Parser) buildBinaryNode(op string, left, right ExpressionNode) Expressi
 		return &CommaNode{Expressions: []ExpressionNode{left, right}}
 	case "//":
 		return &AlternativeNode{Left: left, Right: right}
+	case "=", "|=", "+=", "-=", "*=", "//=":
+		return &AssignNode{Path: left, Op: op, Value: right}
 	case "as":
 		// For "expr as $var | body", right should be parsed as "var | body"
 		// But the way we parse, 'right' is just the variable part
@@ -929,6 +1033,67 @@ func unescapeString(s string) string {
 	s = strings.ReplaceAll(s, `\t`, "\t")
 	s = strings.ReplaceAll(s, "\x00", `\`) // Restore single backslash
 	return s
+}
+
+// parseStringInterpolation parses a string containing \(...) interpolations
+func (p *Parser) parseStringInterpolation(s string, rest []lexer.Token) (ExpressionNode, []lexer.Token, error) {
+	var parts []StringPart
+
+	for len(s) > 0 {
+		// Find next \(
+		idx := strings.Index(s, `\(`)
+		if idx == -1 {
+			// No more interpolations - rest is literal
+			if len(s) > 0 {
+				parts = append(parts, StringPart{Literal: unescapeString(s)})
+			}
+			break
+		}
+
+		// Add literal part before \(
+		if idx > 0 {
+			parts = append(parts, StringPart{Literal: unescapeString(s[:idx])})
+		}
+
+		// Find matching )
+		s = s[idx+2:] // Skip \(
+		depth := 1
+		end := 0
+		for i := 0; i < len(s); i++ {
+			if s[i] == '(' {
+				depth++
+			} else if s[i] == ')' {
+				depth--
+				if depth == 0 {
+					end = i
+					break
+				}
+			} else if s[i] == '\\' && i+1 < len(s) {
+				i++ // Skip escaped character
+			}
+		}
+		if depth != 0 {
+			return nil, nil, fmt.Errorf("unmatched \\( in string interpolation")
+		}
+
+		// Parse the expression inside \(...)
+		exprStr := s[:end]
+		expr, err := p.Parse(exprStr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing interpolated expression %q: %w", exprStr, err)
+		}
+		parts = append(parts, StringPart{Expr: expr})
+
+		// Continue after the )
+		s = s[end+1:]
+	}
+
+	// If there's only one literal part with no expressions, return plain literal
+	if len(parts) == 1 && parts[0].Expr == nil {
+		return &LiteralNode{Value: parts[0].Literal}, rest, nil
+	}
+
+	return &StringInterpolationNode{Parts: parts}, rest, nil
 }
 
 // Global default parser instance
