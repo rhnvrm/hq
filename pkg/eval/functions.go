@@ -731,6 +731,34 @@ func evalInside(argExpr parser.ExpressionNode, ctx *types.Context) ([]*types.Can
 	return results, nil
 }
 
+// evalTypeFilter filters values by type (numbers, strings, etc.).
+func evalTypeFilter(ctx *types.Context, typeName string) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		match := false
+		switch typeName {
+		case "number":
+			_, match = toNumber(node.Value)
+		case "string":
+			_, match = node.Value.(string)
+		case "boolean":
+			_, match = node.Value.(bool)
+		case "null":
+			match = node.Value == nil
+		case "array":
+			_, match = node.Value.([]any)
+		case "object":
+			_, match = node.Value.(map[string]any)
+		}
+		if match {
+			results = append(results, node)
+		}
+	}
+
+	return results, nil
+}
+
 // evalSplit splits a string by a delimiter.
 func evalSplit(delimExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
 	// Evaluate delimiter

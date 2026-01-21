@@ -88,6 +88,12 @@ func evaluate(node parser.ExpressionNode, ctx *types.Context) ([]*types.Candidat
 	case *parser.VariableBindNode:
 		return evalVariableBind(n, ctx)
 
+	case *parser.RecursiveDescentNode:
+		return evalRecursiveDescent(n, ctx)
+
+	case *parser.OptionalNode:
+		return evalOptional(n, ctx)
+
 	default:
 		return nil, fmt.Errorf("unimplemented expression type: %T", node)
 	}
@@ -704,6 +710,61 @@ func isTruthy(v any) bool {
 	return true
 }
 
+// evalOptional evaluates the optional operator (?).
+// It suppresses errors and returns empty instead of errors/null.
+func evalOptional(n *parser.OptionalNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	results, err := evaluate(n.Expr, ctx)
+	if err != nil {
+		// Suppress errors - return empty
+		return []*types.CandidateNode{}, nil
+	}
+
+	// Filter out null values
+	var filtered []*types.CandidateNode
+	for _, r := range results {
+		if r.Value != nil {
+			filtered = append(filtered, r)
+		}
+	}
+
+	return filtered, nil
+}
+
+// evalRecursiveDescent evaluates the recursive descent operator (..).
+// It returns all values in the input, recursively descending into arrays and objects.
+func evalRecursiveDescent(n *parser.RecursiveDescentNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		// Add the current value
+		results = append(results, node)
+		// Recursively add all nested values
+		results = append(results, collectAllValues(node.Value)...)
+	}
+
+	return results, nil
+}
+
+// collectAllValues recursively collects all values from arrays and objects.
+func collectAllValues(v any) []*types.CandidateNode {
+	var results []*types.CandidateNode
+
+	switch val := v.(type) {
+	case []any:
+		for _, elem := range val {
+			results = append(results, types.NewCandidateNode(elem))
+			results = append(results, collectAllValues(elem)...)
+		}
+	case map[string]any:
+		for _, elem := range val {
+			results = append(results, types.NewCandidateNode(elem))
+			results = append(results, collectAllValues(elem)...)
+		}
+	}
+
+	return results
+}
+
 // evalVariableBind evaluates variable binding (expr as $var | body).
 func evalVariableBind(n *parser.VariableBindNode, ctx *types.Context) ([]*types.CandidateNode, error) {
 	var results []*types.CandidateNode
@@ -871,6 +932,18 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 			return nil, fmt.Errorf("inside requires 1 argument")
 		}
 		return evalInside(n.Args[0], ctx)
+	case "numbers":
+		return evalTypeFilter(ctx, "number")
+	case "strings":
+		return evalTypeFilter(ctx, "string")
+	case "booleans":
+		return evalTypeFilter(ctx, "boolean")
+	case "nulls":
+		return evalTypeFilter(ctx, "null")
+	case "arrays":
+		return evalTypeFilter(ctx, "array")
+	case "objects":
+		return evalTypeFilter(ctx, "object")
 	case "split":
 		if len(n.Args) != 1 {
 			return nil, fmt.Errorf("split requires 1 argument")

@@ -215,6 +215,10 @@ func (p *Parser) parsePrimary(tokens []lexer.Token) (ExpressionNode, []lexer.Tok
 		}
 		return &UnaryOpNode{Op: "-", Expr: operand}, rest, nil
 
+	// Recursive descent (..)
+	case tok.Value == "..":
+		return &RecursiveDescentNode{From: nil}, tokens[1:], nil
+
 	// String literal
 	case p.isTokenType(tok, "String"):
 		// Remove quotes and unescape
@@ -288,6 +292,11 @@ func (p *Parser) parseDotExpression(tokens []lexer.Token) (ExpressionNode, []lex
 			} else {
 				return nil, nil, fmt.Errorf("expected identifier or [ after ., got %s", nextTok.Value)
 			}
+
+		// Optional operator: expr?
+		case tok.Value == "?":
+			node = &OptionalNode{Expr: node}
+			rest = rest[1:]
 
 		default:
 			// End of dot expression chain
