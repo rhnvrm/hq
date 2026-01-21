@@ -15,6 +15,17 @@ It reads JSON, YAML, or HUML input and outputs proper HUML format by default.
 - [Pipe and Filters](#pipe-and-filters)
 - [Operators](#operators)
 - [Built-in Functions](#built-in-functions)
+- [Variables and Binding](#variables-and-binding)
+- [Reduce](#reduce)
+- [Dynamic Index Access](#dynamic-index-access)
+- [Conditionals](#conditionals)
+- [Error Handling](#error-handling)
+- [String Interpolation](#string-interpolation)
+- [Regex](#regex)
+- [Recursive Descent](#recursive-descent)
+- [Path Operations](#path-operations)
+- [Assignment Operators](#assignment-operators)
+- [Object Transforms](#object-transforms)
 - [Output Formats](#output-formats)
 - [Real-World Examples](#real-world-examples)
 
@@ -489,6 +500,357 @@ $ echo '"hello world"' | hq 'endswith("world")'
 true
 ```
 
+## Variables and Binding
+
+### Simple Variable Binding
+
+Bind values to variables with `as $var`:
+
+```bash
+$ echo '{"x": 10, "y": 20}' | hq '.x as $a | .y as $b | $a + $b'
+%HUML v0.2.0
+30
+```
+
+```bash
+$ echo '{"items": [1, 2, 3], "multiplier": 10}' | hq '.multiplier as $m | [.items[] | . * $m]'
+%HUML v0.2.0
+- 10
+- 20
+- 30
+```
+
+### Destructuring Bind
+
+Extract multiple fields at once with destructuring:
+
+```bash
+$ echo '{"point": {"x": 10, "y": 20}}' | hq '.point as {x: $x, y: $y} | $x + $y'
+%HUML v0.2.0
+30
+```
+
+```bash
+$ echo '{"person": {"name": "Alice", "age": 30}}' | hq '.person as {name: $n, age: $a} | "\($n) is \($a) years old"'
+%HUML v0.2.0
+"Alice is 30 years old"
+```
+
+## Reduce
+
+Reduce iterates over values, accumulating a result:
+
+```bash
+$ echo '[1, 2, 3, 4, 5]' | hq 'reduce .[] as $x (0; . + $x)'
+%HUML v0.2.0
+15
+```
+
+```bash
+$ echo '[1, 2, 3, 4, 5]' | hq 'reduce .[] as $x (1; . * $x)'
+%HUML v0.2.0
+120
+```
+
+### Building Objects with Reduce
+
+```bash
+$ echo '[{"key": "a", "val": 1}, {"key": "b", "val": 2}]' | hq 'reduce .[] as $i ({}; .[$i.key] = $i.val)'
+%HUML v0.2.0
+a: 1
+b: 2
+```
+
+## Dynamic Index Access
+
+Access fields dynamically using `.[$var]`:
+
+```bash
+$ echo '{"a": 1, "b": 2, "field": "a"}' | hq '.field as $f | .[$f]'
+%HUML v0.2.0
+1
+```
+
+## Conditionals
+
+### If-Then-Else
+
+```bash
+$ echo '5' | hq 'if . > 3 then "big" else "small" end'
+%HUML v0.2.0
+"big"
+```
+
+```bash
+$ echo '[1, 5, 3, 8, 2]' | hq '[.[] | if . > 4 then "big" else "small" end]'
+%HUML v0.2.0
+- "small"
+- "big"
+- "small"
+- "big"
+- "small"
+```
+
+## Error Handling
+
+### Try-Catch
+
+```bash
+$ echo '{}' | hq 'try .foo.bar.baz catch "not found"'
+%HUML v0.2.0
+null
+```
+
+```bash
+$ echo '5' | hq 'try (1 / 0) catch "division error"'
+%HUML v0.2.0
+"division error"
+```
+
+### Optional Operator
+
+The `?` operator suppresses errors:
+
+```bash
+$ echo '[{"a": 1}, {"b": 2}, {"a": 3}]' | hq '[.[] | .a?]'
+%HUML v0.2.0
+- 1
+- 3
+```
+
+### Default Values
+
+Use `//` to provide default values for null or false:
+
+```bash
+$ echo 'null' | hq '. // "default"'
+%HUML v0.2.0
+"default"
+```
+
+```bash
+$ echo '{"name": null}' | hq '.name // "anonymous"'
+%HUML v0.2.0
+"anonymous"
+```
+
+## String Interpolation
+
+Embed expressions in strings with `\(expr)`:
+
+```bash
+$ echo '{"name": "World"}' | hq '"Hello, \(.name)!"'
+%HUML v0.2.0
+"Hello, World!"
+```
+
+```bash
+$ echo '{"a": 10, "b": 20}' | hq '"\(.a) + \(.b) = \(.a + .b)"'
+%HUML v0.2.0
+"10 + 20 = 30"
+```
+
+## Regex
+
+### Test
+
+```bash
+$ echo '"test@example.com"' | hq 'test("@")'
+%HUML v0.2.0
+true
+```
+
+```bash
+$ echo '"hello123"' | hq 'test("[0-9]+")'
+%HUML v0.2.0
+true
+```
+
+### Match
+
+```bash
+$ echo '"test@example.com"' | hq 'match("(.+)@(.+)") | .captures[].string'
+%HUML v0.2.0
+"test"
+
+%HUML v0.2.0
+"example.com"
+```
+
+### Substitution
+
+```bash
+$ echo '"hello world"' | hq 'sub("world"; "there")'
+%HUML v0.2.0
+"hello there"
+```
+
+```bash
+$ echo '"hello world world"' | hq 'gsub("world"; "planet")'
+%HUML v0.2.0
+"hello planet planet"
+```
+
+## Recursive Descent
+
+The `..` operator recursively descends into all values:
+
+```bash
+$ echo '{"a": {"b": {"c": 1}}, "d": 2}' | hq '[.. | numbers]'
+%HUML v0.2.0
+- 1
+- 2
+```
+
+```bash
+$ echo '{"users": [{"name": "Alice"}, {"name": "Bob"}]}' | hq '[.. | .name? // empty]'
+%HUML v0.2.0
+- "Alice"
+- "Bob"
+```
+
+## Path Operations
+
+### Get Paths
+
+```bash
+$ echo '{"a": 1, "b": {"c": 2}}' | hq '[paths]'
+%HUML v0.2.0
+- ::
+  - "a"
+- ::
+  - "b"
+- ::
+  - "b"
+  - "c"
+```
+
+```bash
+$ echo '{"a": 1, "b": {"c": 2}}' | hq '[paths(scalars)]'
+%HUML v0.2.0
+- ::
+  - "a"
+- ::
+  - "b"
+  - "c"
+```
+
+### Get/Set Path
+
+```bash
+$ echo '{"a": {"b": 1}}' | hq 'getpath(["a", "b"])'
+%HUML v0.2.0
+1
+```
+
+```bash
+$ echo '{"a": 1}' | hq 'setpath(["b", "c"]; 2)'
+%HUML v0.2.0
+a: 1
+b::
+  c: 2
+```
+
+## Assignment Operators
+
+### Simple Assignment
+
+```bash
+$ echo '{"a": 1}' | hq '.b = 2'
+%HUML v0.2.0
+a: 1
+b: 2
+```
+
+```bash
+$ echo '{"a": 1}' | hq '.a = 10'
+%HUML v0.2.0
+a: 10
+```
+
+### Update Assignment
+
+```bash
+$ echo '{"a": 1}' | hq '.a |= . + 1'
+%HUML v0.2.0
+a: 2
+```
+
+```bash
+$ echo '[1, 2, 3]' | hq '.[] |= . * 2'
+%HUML v0.2.0
+- 2
+- 4
+- 6
+```
+
+### Arithmetic Assignment
+
+```bash
+$ echo '{"count": 5}' | hq '.count += 1'
+%HUML v0.2.0
+count: 6
+```
+
+```bash
+$ echo '{"count": 5}' | hq '.count -= 2'
+%HUML v0.2.0
+count: 3
+```
+
+```bash
+$ echo '{"count": 5}' | hq '.count *= 3'
+%HUML v0.2.0
+count: 15
+```
+
+### Delete
+
+```bash
+$ echo '{"a": 1, "b": 2, "c": 3}' | hq 'del(.b)'
+%HUML v0.2.0
+a: 1
+c: 3
+```
+
+## Object Transforms
+
+### to_entries / from_entries
+
+```bash
+$ echo '{"a": 1, "b": 2}' | hq 'to_entries'
+%HUML v0.2.0
+- ::
+  key: "a"
+  value: 1
+- ::
+  key: "b"
+  value: 2
+```
+
+```bash
+$ echo '[{"key": "a", "value": 1}, {"key": "b", "value": 2}]' | hq 'from_entries'
+%HUML v0.2.0
+a: 1
+b: 2
+```
+
+### with_entries
+
+```bash
+$ echo '{"a": 1, "b": 2}' | hq 'with_entries(.value += 10)'
+%HUML v0.2.0
+a: 11
+b: 12
+```
+
+```bash
+$ echo '{"foo": 1, "bar": 2}' | hq 'with_entries(.key = "prefix_" + .key)'
+%HUML v0.2.0
+prefix_bar: 2
+prefix_foo: 1
+```
+
 ## Output Formats
 
 ### HUML (default)
@@ -544,12 +906,10 @@ Alice
 ```bash
 $ echo '{"users": [{"name": "Alice", "role": "admin"}, {"name": "Bob", "role": "user"}]}' | hq '.users[].name'
 %HUML v0.2.0
-name: "Alice"
-role: "admin"
+"Alice"
 
 %HUML v0.2.0
-name: "Bob"
-role: "user"
+"Bob"
 ```
 
 ### Filter Active Users
@@ -601,4 +961,4 @@ cat config.huml | hq -o json '.' > config.json
 
 ---
 
-*Generated by `scripts/generate_walkthrough.sh` on 2026-01-21 12:54:22 UTC*
+*Generated by `scripts/generate_walkthrough.sh` on 2026-01-21 22:23:51 UTC*

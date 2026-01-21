@@ -49,6 +49,17 @@ It reads JSON, YAML, or HUML input and outputs proper HUML format by default.
 - [Pipe and Filters](#pipe-and-filters)
 - [Operators](#operators)
 - [Built-in Functions](#built-in-functions)
+- [Variables and Binding](#variables-and-binding)
+- [Reduce](#reduce)
+- [Dynamic Index Access](#dynamic-index-access)
+- [Conditionals](#conditionals)
+- [Error Handling](#error-handling)
+- [String Interpolation](#string-interpolation)
+- [Regex](#regex)
+- [Recursive Descent](#recursive-descent)
+- [Path Operations](#path-operations)
+- [Assignment Operators](#assignment-operators)
+- [Object Transforms](#object-transforms)
 - [Output Formats](#output-formats)
 - [Real-World Examples](#real-world-examples)
 
@@ -210,6 +221,142 @@ HEADER
     run_example "echo '[\"hello\", \"world\"]' | $HQ 'join(\" \")'"
     run_example "echo '\"hello world\"' | $HQ 'startswith(\"hello\")'"
     run_example "echo '\"hello world\"' | $HQ 'endswith(\"world\")'"
+
+    echo "## Variables and Binding"
+    echo
+    echo "### Simple Variable Binding"
+    echo
+    echo "Bind values to variables with \`as \$var\`:"
+    echo
+    run_example "echo '{\"x\": 10, \"y\": 20}' | $HQ '.x as \$a | .y as \$b | \$a + \$b'"
+    run_example "echo '{\"items\": [1, 2, 3], \"multiplier\": 10}' | $HQ '.multiplier as \$m | [.items[] | . * \$m]'"
+
+    echo "### Destructuring Bind"
+    echo
+    echo "Extract multiple fields at once with destructuring:"
+    echo
+    run_example "echo '{\"point\": {\"x\": 10, \"y\": 20}}' | $HQ '.point as {x: \$x, y: \$y} | \$x + \$y'"
+    run_example "echo '{\"person\": {\"name\": \"Alice\", \"age\": 30}}' | $HQ '.person as {name: \$n, age: \$a} | \"\(\$n) is \(\$a) years old\"'"
+
+    echo "## Reduce"
+    echo
+    echo "Reduce iterates over values, accumulating a result:"
+    echo
+    run_example "echo '[1, 2, 3, 4, 5]' | $HQ 'reduce .[] as \$x (0; . + \$x)'"
+    run_example "echo '[1, 2, 3, 4, 5]' | $HQ 'reduce .[] as \$x (1; . * \$x)'"
+
+    echo "### Building Objects with Reduce"
+    echo
+    run_example "echo '[{\"key\": \"a\", \"val\": 1}, {\"key\": \"b\", \"val\": 2}]' | $HQ 'reduce .[] as \$i ({}; .[\$i.key] = \$i.val)'"
+
+    echo "## Dynamic Index Access"
+    echo
+    echo "Access fields dynamically using \`.[\$var]\`:"
+    echo
+    run_example "echo '{\"a\": 1, \"b\": 2, \"field\": \"a\"}' | $HQ '.field as \$f | .[\$f]'"
+
+    echo "## Conditionals"
+    echo
+    echo "### If-Then-Else"
+    echo
+    run_example "echo '5' | $HQ 'if . > 3 then \"big\" else \"small\" end'"
+    run_example "echo '[1, 5, 3, 8, 2]' | $HQ '[.[] | if . > 4 then \"big\" else \"small\" end]'"
+
+    echo "## Error Handling"
+    echo
+    echo "### Try-Catch"
+    echo
+    run_example "echo '{}' | $HQ 'try .foo.bar.baz catch \"not found\"'"
+    run_example "echo '5' | $HQ 'try (1 / 0) catch \"division error\"'"
+
+    echo "### Optional Operator"
+    echo
+    echo "The \`?\` operator suppresses errors:"
+    echo
+    run_example "echo '[{\"a\": 1}, {\"b\": 2}, {\"a\": 3}]' | $HQ '[.[] | .a?]'"
+
+    echo "### Default Values"
+    echo
+    echo "Use \`//\` to provide default values for null or false:"
+    echo
+    run_example "echo 'null' | $HQ '. // \"default\"'"
+    run_example "echo '{\"name\": null}' | $HQ '.name // \"anonymous\"'"
+
+    echo "## String Interpolation"
+    echo
+    echo "Embed expressions in strings with \`\\(expr)\`:"
+    echo
+    run_example "echo '{\"name\": \"World\"}' | $HQ '\"Hello, \(.name)!\"'"
+    run_example "echo '{\"a\": 10, \"b\": 20}' | $HQ '\"\(.a) + \(.b) = \(.a + .b)\"'"
+
+    echo "## Regex"
+    echo
+    echo "### Test"
+    echo
+    run_example "echo '\"test@example.com\"' | $HQ 'test(\"@\")'"
+    run_example "echo '\"hello123\"' | $HQ 'test(\"[0-9]+\")'"
+
+    echo "### Match"
+    echo
+    run_example "echo '\"test@example.com\"' | $HQ 'match(\"(.+)@(.+)\") | .captures[].string'"
+
+    echo "### Substitution"
+    echo
+    run_example "echo '\"hello world\"' | $HQ 'sub(\"world\"; \"there\")'"
+    run_example "echo '\"hello world world\"' | $HQ 'gsub(\"world\"; \"planet\")'"
+
+    echo "## Recursive Descent"
+    echo
+    echo "The \`..\` operator recursively descends into all values:"
+    echo
+    run_example "echo '{\"a\": {\"b\": {\"c\": 1}}, \"d\": 2}' | $HQ '[.. | numbers]'"
+    run_example "echo '{\"users\": [{\"name\": \"Alice\"}, {\"name\": \"Bob\"}]}' | $HQ '[.. | .name? // empty]'"
+
+    echo "## Path Operations"
+    echo
+    echo "### Get Paths"
+    echo
+    run_example "echo '{\"a\": 1, \"b\": {\"c\": 2}}' | $HQ '[paths]'"
+    run_example "echo '{\"a\": 1, \"b\": {\"c\": 2}}' | $HQ '[paths(scalars)]'"
+
+    echo "### Get/Set Path"
+    echo
+    run_example "echo '{\"a\": {\"b\": 1}}' | $HQ 'getpath([\"a\", \"b\"])'"
+    run_example "echo '{\"a\": 1}' | $HQ 'setpath([\"b\", \"c\"]; 2)'"
+
+    echo "## Assignment Operators"
+    echo
+    echo "### Simple Assignment"
+    echo
+    run_example "echo '{\"a\": 1}' | $HQ '.b = 2'"
+    run_example "echo '{\"a\": 1}' | $HQ '.a = 10'"
+
+    echo "### Update Assignment"
+    echo
+    run_example "echo '{\"a\": 1}' | $HQ '.a |= . + 1'"
+    run_example "echo '[1, 2, 3]' | $HQ '.[] |= . * 2'"
+
+    echo "### Arithmetic Assignment"
+    echo
+    run_example "echo '{\"count\": 5}' | $HQ '.count += 1'"
+    run_example "echo '{\"count\": 5}' | $HQ '.count -= 2'"
+    run_example "echo '{\"count\": 5}' | $HQ '.count *= 3'"
+
+    echo "### Delete"
+    echo
+    run_example "echo '{\"a\": 1, \"b\": 2, \"c\": 3}' | $HQ 'del(.b)'"
+
+    echo "## Object Transforms"
+    echo
+    echo "### to_entries / from_entries"
+    echo
+    run_example "echo '{\"a\": 1, \"b\": 2}' | $HQ 'to_entries'"
+    run_example "echo '[{\"key\": \"a\", \"value\": 1}, {\"key\": \"b\", \"value\": 2}]' | $HQ 'from_entries'"
+
+    echo "### with_entries"
+    echo
+    run_example "echo '{\"a\": 1, \"b\": 2}' | $HQ 'with_entries(.value += 10)'"
+    run_example "echo '{\"foo\": 1, \"bar\": 2}' | $HQ 'with_entries(.key = \"prefix_\" + .key)'"
 
     echo "## Output Formats"
     echo
