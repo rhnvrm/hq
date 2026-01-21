@@ -30,6 +30,28 @@ run_example() {
     echo
 }
 
+# Helper to run an example with a HUML file
+run_huml_example() {
+    local huml_content="$1"
+    local expression="$2"
+    local filename="${3:-example.huml}"
+    
+    # Create temp file
+    local tmpfile=$(mktemp)
+    echo "$huml_content" > "$tmpfile"
+    
+    echo '```bash'
+    echo "$ cat $filename"
+    echo "$huml_content"
+    echo ""
+    echo "$ hq '$expression' $filename"
+    "$HQ" "$expression" "$tmpfile" 2>&1 || true
+    echo '```'
+    echo
+    
+    rm -f "$tmpfile"
+}
+
 # Generate the walkthrough
 cat > "$OUTPUT" << 'HEADER'
 # hq Walkthrough
@@ -44,6 +66,7 @@ It reads JSON, YAML, or HUML input and outputs proper HUML format by default.
 
 - [Installation](#installation)
 - [Basic Usage](#basic-usage)
+- [HUML Input Examples](#huml-input-examples)
 - [Identity and Field Access](#identity-and-field-access)
 - [Array Operations](#array-operations)
 - [Pipe and Filters](#pipe-and-filters)
@@ -70,7 +93,7 @@ It reads JSON, YAML, or HUML input and outputs proper HUML format by default.
 go build -o hq ./cmd/hq/
 
 # Or install
-go install github.com/huml-lang/hq/cmd/hq@latest
+go install github.com/rhnvrm/hq/cmd/hq@latest
 ```
 
 ## Basic Usage
@@ -89,15 +112,99 @@ hq -n '1 + 2 + 3'
 echo '{"name": "Alice"}' | hq -o json '.'
 ```
 
-## Identity and Field Access
-
-The identity operator `.` returns the input unchanged.
-Field access uses `.fieldname` syntax.
-
 HEADER
 
 # Add live examples
 {
+    echo "## HUML Input Examples"
+    echo
+    echo "hq natively supports HUML (Human-Oriented Markup Language) input."
+    echo "HUML uses \`::\` to mark complex types (objects and arrays)."
+    echo
+    echo "### Basic HUML Structure"
+    echo
+    echo "Nested objects use \`::\` suffix:"
+    echo
+    run_huml_example 'server::
+  host: "localhost"
+  port: 8080' '.server.host' 'config.huml'
+
+    echo "### Inline Lists"
+    echo
+    echo "Lists can be written inline with commas:"
+    echo
+    run_huml_example 'ports:: 80, 443, 8080' '.ports[]' 'ports.huml'
+
+    echo "### Inline Dicts"
+    echo
+    echo "Dicts can also be inline:"
+    echo
+    run_huml_example 'point:: x: 10, y: 20, z: 30' '.point | .x + .y + .z' 'point.huml'
+
+    echo "### Multi-line Lists"
+    echo
+    echo "Lists with \`-\` prefix:"
+    echo
+    run_huml_example 'tags::
+  - "web"
+  - "api"
+  - "v2"' '.tags[]' 'tags.huml'
+
+    echo "### List of Objects"
+    echo
+    echo "Use \`- ::\` for list items that are objects:"
+    echo
+    run_huml_example 'users::
+  - ::
+    name: "Alice"
+    role: "admin"
+  - ::
+    name: "Bob"
+    role: "user"' '.users[].name' 'users.huml'
+
+    echo "### Filtering HUML Data"
+    echo
+    run_huml_example 'users::
+  - ::
+    name: "Alice"
+    active: true
+  - ::
+    name: "Bob"
+    active: false
+  - ::
+    name: "Carol"
+    active: true' '.users[] | select(.active) | .name' 'users.huml'
+
+    echo "### Deeply Nested HUML"
+    echo
+    run_huml_example 'app::
+  database::
+    primary::
+      host: "db1.example.com"
+      port: 5432
+    replica::
+      host: "db2.example.com"
+      port: 5432' '.app.database | keys' 'app.huml'
+
+    echo "### Mixed Inline and Multi-line"
+    echo
+    run_huml_example 'server::
+  host: "localhost"
+  ports:: 80, 443
+  features::
+    - "ssl"
+    - "http2"' '.server.ports[]' 'server.huml'
+
+    echo "---"
+    echo
+    echo "The following examples use JSON input for brevity, but all expressions work with HUML input too."
+    echo
+
+    echo "## Identity and Field Access"
+    echo
+    echo "The identity operator \`.\` returns the input unchanged."
+    echo "Field access uses \`.fieldname\` syntax."
+    echo
     echo "### Identity"
     echo
     run_example "echo '{\"name\": \"Alice\", \"age\": 30}' | $HQ '.'"

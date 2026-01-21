@@ -30,18 +30,29 @@ func testScenario(t *testing.T, s *Scenario) {
 		}
 
 		// Parse the input document
-		// Try JSON first, then YAML (for test convenience), then HUML
+		// Try JSON first, then HUML (if contains ::), then YAML as fallback
 		var input any
 		if s.Document != "" {
 			doc := strings.TrimSpace(s.Document)
 
 			// Try JSON first
 			if err := json.Unmarshal([]byte(doc), &input); err != nil {
-				// Try YAML as second option (more flexible, supports nested syntax)
-				if err2 := yaml.Unmarshal([]byte(doc), &input); err2 != nil {
-					// Try HUML as final fallback
-					if err3 := gohuml.Unmarshal([]byte(doc), &input); err3 != nil {
-						t.Fatalf("failed to parse input document (JSON: %v, YAML: %v, HUML: %v)", err, err2, err3)
+				// If document contains :: (HUML marker for complex types), try HUML first
+				// This prevents YAML from misinterpreting `key::` as a key named "key:"
+				if strings.Contains(doc, "::") {
+					if err2 := gohuml.Unmarshal([]byte(doc), &input); err2 != nil {
+						// Fall back to YAML if HUML fails
+						if err3 := yaml.Unmarshal([]byte(doc), &input); err3 != nil {
+							t.Fatalf("failed to parse input document (JSON: %v, HUML: %v, YAML: %v)", err, err2, err3)
+						}
+					}
+				} else {
+					// No ::, try YAML first (more flexible for simple nested syntax)
+					if err2 := yaml.Unmarshal([]byte(doc), &input); err2 != nil {
+						// Try HUML as final fallback
+						if err3 := gohuml.Unmarshal([]byte(doc), &input); err3 != nil {
+							t.Fatalf("failed to parse input document (JSON: %v, YAML: %v, HUML: %v)", err, err2, err3)
+						}
 					}
 				}
 			}

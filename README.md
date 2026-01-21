@@ -1,16 +1,14 @@
 # hq - HUML Query Processor
 
-A command-line processor for [HUML](https://github.com/huml-lang/go-huml) (Human-Oriented Markup Language) with jq-compatible syntax.
+A command-line processor for [HUML](https://huml.io) (Human-Oriented Markup Language) with jq-compatible syntax.
 
 ```bash
 # Query a HUML config file
 cat config.huml
-# database:
+# database::
 #   host: "localhost"
 #   port: 5432
-# features:
-#   - logging
-#   - metrics
+# features:: "logging", "metrics"
 
 hq '.database.host' config.huml
 # "localhost"
@@ -22,26 +20,34 @@ hq '.features[]' config.huml
 
 ## What is HUML?
 
-HUML is a human-friendly configuration format that's cleaner than YAML and more readable than JSON:
+HUML is a strict, human-readable configuration format. It looks like YAML but avoids its complexity and ambiguity. Key features:
+
+- `::` suffix marks complex types (objects/arrays)
+- Inline lists: `ports:: 80, 443`
+- Inline dicts: `props:: host: "localhost", port: 8080`
+- Multi-line strings with `"""`
+- Comments with `#`
 
 ```huml
 # HUML config example
-server:
+server::
   host: "0.0.0.0"
   port: 8080
 
-database:
+database::
   url: "postgres://localhost/mydb"
   pool_size: 10
 
-users:
-  - name: "Alice"
+users::
+  - ::
+    name: "Alice"
     role: "admin"
-  - name: "Bob"
+  - ::
+    name: "Bob"
     role: "user"
 ```
 
-hq lets you query, filter, and transform HUML data using familiar jq syntax.
+hq lets you query, filter, and transform HUML data using familiar jq syntax. It also accepts JSON and YAML input.
 
 ## Installation
 
@@ -73,13 +79,13 @@ hq -r '.server.host' config.huml # Raw string (no quotes)
 
 ```bash
 # config.huml:
-# app:
+# app::
 #   name: "myservice"
 #   version: "1.2.3"
-# database:
-#   primary:
+# database::
+#   primary::
 #     host: "db1.example.com"
-#   replica:
+#   replica::
 #     host: "db2.example.com"
 
 # Get nested value
@@ -96,14 +102,17 @@ hq '.database | .primary.host, .replica.host' config.huml
 
 ```bash
 # users.huml:
-# users:
-#   - name: "Alice"
+# users::
+#   - ::
+#     name: "Alice"
 #     role: "admin"
 #     active: true
-#   - name: "Bob"
+#   - ::
+#     name: "Bob"
 #     role: "user"
 #     active: false
-#   - name: "Carol"
+#   - ::
+#     name: "Carol"
 #     role: "user"
 #     active: true
 
@@ -166,6 +175,7 @@ See [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) for comprehensive examples.
 
 ## Related Projects
 
+- [HUML Specification](https://huml.io) - Official HUML language specification
 - [go-huml](https://github.com/huml-lang/go-huml) - Go library for HUML parsing
 - [jq](https://github.com/jqlang/jq) - JSON processor (syntax inspiration)
 
