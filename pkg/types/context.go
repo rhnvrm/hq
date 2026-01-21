@@ -22,14 +22,21 @@ func NewContext(input any) *Context {
 	}
 }
 
-// Clone creates a copy of the context with new MatchingNodes slice.
-// Variables are shared (intentionally - for lexical scoping).
+// Clone creates a copy of the context with new MatchingNodes slice and Variables map.
+// New variables map inherits existing values but can be modified independently.
 func (c *Context) Clone() *Context {
 	nodes := make([]*CandidateNode, len(c.MatchingNodes))
 	copy(nodes, c.MatchingNodes)
+
+	// Copy variables map
+	vars := make(map[string]any, len(c.Variables))
+	for k, v := range c.Variables {
+		vars[k] = v
+	}
+
 	return &Context{
 		MatchingNodes:     nodes,
-		Variables:         c.Variables,
+		Variables:         vars,
 		ReadOnlyVariables: c.ReadOnlyVariables,
 	}
 }

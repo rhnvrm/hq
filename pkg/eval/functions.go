@@ -248,13 +248,27 @@ func evalFirst(ctx *types.Context) ([]*types.CandidateNode, error) {
 		}
 
 		if len(arr) == 0 {
-			results = append(results, types.NewCandidateNode(nil))
-		} else {
-			results = append(results, types.NewCandidateNode(arr[0]))
+			return nil, fmt.Errorf("cannot get first element of empty array")
 		}
+		results = append(results, types.NewCandidateNode(arr[0]))
 	}
 
 	return results, nil
+}
+
+// evalFirstExpr evaluates an expression and returns the first result.
+func evalFirstExpr(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate the expression
+	results, err := evaluate(expr, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("cannot get first element of empty sequence")
+	}
+
+	return []*types.CandidateNode{results[0]}, nil
 }
 
 // evalLast returns the last element of an array.
@@ -268,10 +282,163 @@ func evalLast(ctx *types.Context) ([]*types.CandidateNode, error) {
 		}
 
 		if len(arr) == 0 {
-			results = append(results, types.NewCandidateNode(nil))
-		} else {
-			results = append(results, types.NewCandidateNode(arr[len(arr)-1]))
+			return nil, fmt.Errorf("cannot get last element of empty array")
 		}
+		results = append(results, types.NewCandidateNode(arr[len(arr)-1]))
+	}
+
+	return results, nil
+}
+
+// evalLastExpr evaluates an expression and returns the last result.
+func evalLastExpr(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate the expression
+	results, err := evaluate(expr, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("cannot get last element of empty sequence")
+	}
+
+	return []*types.CandidateNode{results[len(results)-1]}, nil
+}
+
+// evalToEntries converts an object to an array of {key, value} entries.
+func evalToEntries(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		switch v := node.Value.(type) {
+		case map[string]any:
+			entries := make([]any, 0, len(v))
+			// Get keys sorted for consistent output
+			keys := make([]string, 0, len(v))
+			for k := range v {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				entry := map[string]any{
+					"key":   k,
+					"value": v[k],
+				}
+				entries = append(entries, entry)
+			}
+			results = append(results, types.NewCandidateNode(entries))
+		case []any:
+			entries := make([]any, len(v))
+			for i, val := range v {
+				entry := map[string]any{
+					"key":   float64(i),
+					"value": val,
+				}
+				entries[i] = entry
+			}
+			results = append(results, types.NewCandidateNode(entries))
+		default:
+			return nil, fmt.Errorf("to_entries requires object or array input, got %T", node.Value)
+		}
+	}
+
+	return results, nil
+}
+
+// evalFromEntries converts an array of entries to an object.
+func evalFromEntries(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("from_entries requires array input, got %T", node.Value)
+		}
+
+		obj := make(map[string]any)
+		for _, elem := range arr {
+			entry, ok := elem.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("from_entries: entry must be an object")
+			}
+
+			// Support both {key, value} and {name, value} and {k, v}
+			var key string
+			var value any
+			var keyFound, valueFound bool
+
+			for k, v := range entry {
+				switch k {
+				case "key", "name", "k":
+					if s, ok := v.(string); ok {
+						key = s
+						keyFound = true
+					} else if n, ok := toNumber(v); ok {
+						key = fmt.Sprintf("%v", int64(n))
+						keyFound = true
+					}
+				case "value", "v":
+					value = v
+					valueFound = true
+				}
+			}
+
+			if !keyFound || !valueFound {
+				return nil, fmt.Errorf("from_entries: entry must have key/value")
+			}
+
+			obj[key] = value
+		}
+
+		results = append(results, types.NewCandidateNode(obj))
+	}
+
+	return results, nil
+}
+
+// evalWithEntries applies an expression to each entry and rebuilds the object.
+func evalWithEntries(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		// Convert to entries
+		entriesCtx := ctx.Clone()
+		entriesCtx.SetMatchingNodes([]*types.CandidateNode{node})
+		entries, err := evalToEntries(entriesCtx)
+		if err != nil {
+			return nil, err
+		}
+		if len(entries) == 0 {
+			continue
+		}
+
+		// Apply expression to each entry
+		entriesArr := entries[0].Value.([]any)
+		transformedEntries := make([]any, 0, len(entriesArr))
+
+		for _, entry := range entriesArr {
+			entryCtx := ctx.Clone()
+			entryCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(entry)})
+
+			transformed, err := evaluate(expr, entryCtx)
+			if err != nil {
+				return nil, err
+			}
+
+			for _, t := range transformed {
+				transformedEntries = append(transformedEntries, t.Value)
+			}
+		}
+
+		// Convert back from entries
+		fromCtx := ctx.Clone()
+		fromCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(transformedEntries)})
+		result, err := evalFromEntries(fromCtx)
+		if err != nil {
+			return nil, err
+		}
+
+		results = append(results, result...)
 	}
 
 	return results, nil
@@ -467,7 +634,7 @@ func evalHas(keyExpr parser.ExpressionNode, ctx *types.Context) ([]*types.Candid
 	return results, nil
 }
 
-// evalContains checks if a value contains another.
+// evalContains checks if a value contains another (deep containment).
 func evalContains(argExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
 	// Evaluate argument
 	argResults, err := evaluate(argExpr, ctx)
@@ -482,25 +649,83 @@ func evalContains(argExpr parser.ExpressionNode, ctx *types.Context) ([]*types.C
 	var results []*types.CandidateNode
 
 	for _, node := range ctx.MatchingNodes {
-		switch v := node.Value.(type) {
-		case string:
-			if s, ok := arg.(string); ok {
-				results = append(results, types.NewCandidateNode(strings.Contains(v, s)))
-			} else {
-				results = append(results, types.NewCandidateNode(false))
-			}
-		case []any:
+		results = append(results, types.NewCandidateNode(deepContains(node.Value, arg)))
+	}
+
+	return results, nil
+}
+
+// deepContains checks if a contains b (recursively for objects/arrays).
+func deepContains(a, b any) bool {
+	// String containment
+	if as, aok := a.(string); aok {
+		if bs, bok := b.(string); bok {
+			return strings.Contains(as, bs)
+		}
+		return false
+	}
+
+	// Array containment - b must be subset of a
+	if ba, bok := b.([]any); bok {
+		aa, aok := a.([]any)
+		if !aok {
+			return false
+		}
+		// Every element in b must be contained in some element of a
+		for _, belem := range ba {
 			found := false
-			for _, elem := range v {
-				if equals(elem, arg) {
+			for _, aelem := range aa {
+				if deepContains(aelem, belem) {
 					found = true
 					break
 				}
 			}
-			results = append(results, types.NewCandidateNode(found))
-		default:
-			results = append(results, types.NewCandidateNode(equals(node.Value, arg)))
+			if !found {
+				return false
+			}
 		}
+		return true
+	}
+
+	// Object containment - all keys in b must exist in a with contained values
+	if bm, bok := b.(map[string]any); bok {
+		am, aok := a.(map[string]any)
+		if !aok {
+			return false
+		}
+		for k, bv := range bm {
+			av, exists := am[k]
+			if !exists {
+				return false
+			}
+			if !deepContains(av, bv) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// For scalars, use equality
+	return equals(a, b)
+}
+
+// evalInside checks if a value is inside another (inverse of contains).
+func evalInside(argExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate argument
+	argResults, err := evaluate(argExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(argResults) == 0 {
+		return nil, fmt.Errorf("inside: argument produced no value")
+	}
+	arg := argResults[0].Value
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		// inside is the inverse of contains: (a | inside(b)) == (b | contains(a))
+		results = append(results, types.NewCandidateNode(deepContains(arg, node.Value)))
 	}
 
 	return results, nil
@@ -664,6 +889,226 @@ func evalEndsWith(suffixExpr parser.ExpressionNode, ctx *types.Context) ([]*type
 		}
 
 		results = append(results, types.NewCandidateNode(strings.HasSuffix(s, suffix)))
+	}
+
+	return results, nil
+}
+
+// evalLtrimstr removes a prefix from a string.
+func evalLtrimstr(prefixExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate prefix
+	prefixResults, err := evaluate(prefixExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(prefixResults) == 0 {
+		return nil, fmt.Errorf("ltrimstr: prefix produced no value")
+	}
+	prefix, ok := prefixResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("ltrimstr: prefix must be a string, got %T", prefixResults[0].Value)
+	}
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("ltrimstr: input must be a string, got %T", node.Value)
+		}
+
+		results = append(results, types.NewCandidateNode(strings.TrimPrefix(s, prefix)))
+	}
+
+	return results, nil
+}
+
+// evalRtrimstr removes a suffix from a string.
+func evalRtrimstr(suffixExpr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	// Evaluate suffix
+	suffixResults, err := evaluate(suffixExpr, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(suffixResults) == 0 {
+		return nil, fmt.Errorf("rtrimstr: suffix produced no value")
+	}
+	suffix, ok := suffixResults[0].Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("rtrimstr: suffix must be a string, got %T", suffixResults[0].Value)
+	}
+
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("rtrimstr: input must be a string, got %T", node.Value)
+		}
+
+		results = append(results, types.NewCandidateNode(strings.TrimSuffix(s, suffix)))
+	}
+
+	return results, nil
+}
+
+// evalTrim trims whitespace from both ends of a string.
+func evalTrim(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		s, ok := node.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("trim: input must be a string, got %T", node.Value)
+		}
+
+		results = append(results, types.NewCandidateNode(strings.TrimSpace(s)))
+	}
+
+	return results, nil
+}
+
+// evalMin returns the minimum element of an array.
+func evalMin(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("min requires array input, got %T", node.Value)
+		}
+
+		if len(arr) == 0 {
+			results = append(results, types.NewCandidateNode(nil))
+			continue
+		}
+
+		minVal := arr[0]
+		for _, elem := range arr[1:] {
+			if compareValues(elem, minVal) < 0 {
+				minVal = elem
+			}
+		}
+
+		results = append(results, types.NewCandidateNode(minVal))
+	}
+
+	return results, nil
+}
+
+// evalMax returns the maximum element of an array.
+func evalMax(ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("max requires array input, got %T", node.Value)
+		}
+
+		if len(arr) == 0 {
+			results = append(results, types.NewCandidateNode(nil))
+			continue
+		}
+
+		maxVal := arr[0]
+		for _, elem := range arr[1:] {
+			if compareValues(elem, maxVal) > 0 {
+				maxVal = elem
+			}
+		}
+
+		results = append(results, types.NewCandidateNode(maxVal))
+	}
+
+	return results, nil
+}
+
+// evalMinBy returns the element with the minimum value for a given expression.
+func evalMinBy(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("min_by requires array input, got %T", node.Value)
+		}
+
+		if len(arr) == 0 {
+			results = append(results, types.NewCandidateNode(nil))
+			continue
+		}
+
+		// Find element with minimum key
+		var minElem any
+		var minKey any
+
+		for _, elem := range arr {
+			// Evaluate key expression
+			elemCtx := ctx.Clone()
+			elemCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(elem)})
+
+			keyResults, err := evaluate(expr, elemCtx)
+			if err != nil {
+				return nil, err
+			}
+			if len(keyResults) == 0 {
+				continue
+			}
+
+			key := keyResults[0].Value
+			if minKey == nil || compareValues(key, minKey) < 0 {
+				minElem = elem
+				minKey = key
+			}
+		}
+
+		results = append(results, types.NewCandidateNode(minElem))
+	}
+
+	return results, nil
+}
+
+// evalMaxBy returns the element with the maximum value for a given expression.
+func evalMaxBy(expr parser.ExpressionNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		arr, ok := node.Value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("max_by requires array input, got %T", node.Value)
+		}
+
+		if len(arr) == 0 {
+			results = append(results, types.NewCandidateNode(nil))
+			continue
+		}
+
+		// Find element with maximum key
+		var maxElem any
+		var maxKey any
+
+		for _, elem := range arr {
+			// Evaluate key expression
+			elemCtx := ctx.Clone()
+			elemCtx.SetMatchingNodes([]*types.CandidateNode{types.NewCandidateNode(elem)})
+
+			keyResults, err := evaluate(expr, elemCtx)
+			if err != nil {
+				return nil, err
+			}
+			if len(keyResults) == 0 {
+				continue
+			}
+
+			key := keyResults[0].Value
+			if maxKey == nil || compareValues(key, maxKey) > 0 {
+				maxElem = elem
+				maxKey = key
+			}
+		}
+
+		results = append(results, types.NewCandidateNode(maxElem))
 	}
 
 	return results, nil

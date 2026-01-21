@@ -82,6 +82,12 @@ func evaluate(node parser.ExpressionNode, ctx *types.Context) ([]*types.Candidat
 	case *parser.AlternativeNode:
 		return evalAlternative(n, ctx)
 
+	case *parser.ConditionalNode:
+		return evalConditional(n, ctx)
+
+	case *parser.VariableBindNode:
+		return evalVariableBind(n, ctx)
+
 	default:
 		return nil, fmt.Errorf("unimplemented expression type: %T", node)
 	}
@@ -450,6 +456,14 @@ func applyBinaryOp(op string, left, right any) (any, error) {
 
 // add handles addition of numbers and string concatenation.
 func add(left, right any) (any, error) {
+	// null is identity for addition (jq compatibility)
+	if left == nil {
+		return right, nil
+	}
+	if right == nil {
+		return left, nil
+	}
+
 	// String concatenation
 	if ls, ok := left.(string); ok {
 		if rs, ok := right.(string); ok {
@@ -492,21 +506,88 @@ func add(left, right any) (any, error) {
 }
 
 func subtract(left, right any) (any, error) {
+	// Numeric subtraction
 	ln, lok := toNumber(left)
 	rn, rok := toNumber(right)
 	if lok && rok {
 		return ln - rn, nil
 	}
+
+	// Array subtraction: remove elements that match
+	if la, ok := left.([]any); ok {
+		if ra, ok := right.([]any); ok {
+			result := make([]any, 0)
+			for _, lv := range la {
+				found := false
+				for _, rv := range ra {
+					if equals(lv, rv) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					result = append(result, lv)
+				}
+			}
+			return result, nil
+		}
+	}
+
 	return nil, fmt.Errorf("cannot subtract %T from %T", right, left)
 }
 
 func multiply(left, right any) (any, error) {
+	// Numeric multiplication
 	ln, lok := toNumber(left)
 	rn, rok := toNumber(right)
 	if lok && rok {
 		return ln * rn, nil
 	}
+
+	// String repetition: "ab" * 3 = "ababab"
+	if ls, ok := left.(string); ok {
+		if rn, rok := toNumber(right); rok {
+			n := int(rn)
+			if n <= 0 {
+				return "", nil
+			}
+			result := ""
+			for i := 0; i < n; i++ {
+				result += ls
+			}
+			return result, nil
+		}
+	}
+
+	// Object deep merge
+	if lm, ok := left.(map[string]any); ok {
+		if rm, ok := right.(map[string]any); ok {
+			return deepMerge(lm, rm), nil
+		}
+	}
+
 	return nil, fmt.Errorf("cannot multiply %T and %T", left, right)
+}
+
+// deepMerge recursively merges two objects.
+func deepMerge(base, overlay map[string]any) map[string]any {
+	result := make(map[string]any)
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, v := range overlay {
+		if baseV, exists := result[k]; exists {
+			// If both are objects, recursively merge
+			if baseObj, ok := baseV.(map[string]any); ok {
+				if overlayObj, ok := v.(map[string]any); ok {
+					result[k] = deepMerge(baseObj, overlayObj)
+					continue
+				}
+			}
+		}
+		result[k] = v
+	}
+	return result
 }
 
 func divide(left, right any) (any, error) {
@@ -623,6 +704,76 @@ func isTruthy(v any) bool {
 	return true
 }
 
+// evalVariableBind evaluates variable binding (expr as $var | body).
+func evalVariableBind(n *parser.VariableBindNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		// Evaluate the expression to bind
+		exprCtx := ctx.Clone()
+		exprCtx.SetMatchingNodes([]*types.CandidateNode{node})
+
+		exprResults, err := evaluate(n.Expr, exprCtx)
+		if err != nil {
+			return nil, err
+		}
+
+		// For each result from the expression, bind to variable and evaluate body
+		for _, exprResult := range exprResults {
+			// Create new context with variable bound
+			bodyCtx := ctx.Clone()
+			bodyCtx.SetMatchingNodes([]*types.CandidateNode{node})
+			bodyCtx.Variables[n.VarName] = exprResult.Value
+
+			bodyResults, err := evaluate(n.Body, bodyCtx)
+			if err != nil {
+				return nil, err
+			}
+
+			results = append(results, bodyResults...)
+		}
+	}
+
+	return results, nil
+}
+
+// evalConditional evaluates if-then-else.
+func evalConditional(n *parser.ConditionalNode, ctx *types.Context) ([]*types.CandidateNode, error) {
+	var results []*types.CandidateNode
+
+	for _, node := range ctx.MatchingNodes {
+		// Evaluate condition with this node as input
+		condCtx := ctx.Clone()
+		condCtx.SetMatchingNodes([]*types.CandidateNode{node})
+
+		condResults, err := evaluate(n.Condition, condCtx)
+		if err != nil {
+			return nil, err
+		}
+
+		// Check if condition is truthy
+		var branch parser.ExpressionNode
+		if len(condResults) > 0 && isTruthy(condResults[0].Value) {
+			branch = n.Then
+		} else {
+			branch = n.Else
+		}
+
+		// Evaluate the chosen branch
+		branchCtx := ctx.Clone()
+		branchCtx.SetMatchingNodes([]*types.CandidateNode{node})
+
+		branchResults, err := evaluate(branch, branchCtx)
+		if err != nil {
+			return nil, err
+		}
+
+		results = append(results, branchResults...)
+	}
+
+	return results, nil
+}
+
 // evalUnaryOp evaluates unary operators (not, -).
 func evalUnaryOp(n *parser.UnaryOpNode, ctx *types.Context) ([]*types.CandidateNode, error) {
 	results, err := evaluate(n.Expr, ctx)
@@ -684,8 +835,14 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 	case "add":
 		return evalAdd(ctx)
 	case "first":
+		if len(n.Args) == 1 {
+			return evalFirstExpr(n.Args[0], ctx)
+		}
 		return evalFirst(ctx)
 	case "last":
+		if len(n.Args) == 1 {
+			return evalLastExpr(n.Args[0], ctx)
+		}
 		return evalLast(ctx)
 	case "reverse":
 		return evalReverse(ctx)
@@ -709,6 +866,11 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 			return nil, fmt.Errorf("contains requires 1 argument")
 		}
 		return evalContains(n.Args[0], ctx)
+	case "inside":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("inside requires 1 argument")
+		}
+		return evalInside(n.Args[0], ctx)
 	case "split":
 		if len(n.Args) != 1 {
 			return nil, fmt.Errorf("split requires 1 argument")
@@ -733,6 +895,41 @@ func evalFunctionCall(n *parser.FunctionCallNode, ctx *types.Context) ([]*types.
 			return nil, fmt.Errorf("endswith requires 1 argument")
 		}
 		return evalEndsWith(n.Args[0], ctx)
+	case "ltrimstr":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("ltrimstr requires 1 argument")
+		}
+		return evalLtrimstr(n.Args[0], ctx)
+	case "rtrimstr":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("rtrimstr requires 1 argument")
+		}
+		return evalRtrimstr(n.Args[0], ctx)
+	case "trim":
+		return evalTrim(ctx)
+	case "min":
+		return evalMin(ctx)
+	case "max":
+		return evalMax(ctx)
+	case "min_by":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("min_by requires 1 argument")
+		}
+		return evalMinBy(n.Args[0], ctx)
+	case "max_by":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("max_by requires 1 argument")
+		}
+		return evalMaxBy(n.Args[0], ctx)
+	case "to_entries":
+		return evalToEntries(ctx)
+	case "from_entries":
+		return evalFromEntries(ctx)
+	case "with_entries":
+		if len(n.Args) != 1 {
+			return nil, fmt.Errorf("with_entries requires 1 argument")
+		}
+		return evalWithEntries(n.Args[0], ctx)
 	default:
 		return nil, fmt.Errorf("unknown function: %s", n.Name)
 	}

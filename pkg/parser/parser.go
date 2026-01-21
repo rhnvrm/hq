@@ -61,50 +61,19 @@ func (p *Parser) Parse(expr string) (ExpressionNode, error) {
 // parseExpression is the main parsing entry point.
 // It handles pipe operator (lowest precedence) and dispatches to sub-parsers.
 func (p *Parser) parseExpression(tokens []lexer.Token, minPrec int) (ExpressionNode, error) {
-	// Parse the left-hand side
-	left, rest, err := p.parsePrimary(tokens)
+	// Use the unified parseExpressionTokens and ignore remaining tokens
+	result, rest, err := p.parseExpressionTokens(tokens, minPrec)
 	if err != nil {
 		return nil, err
 	}
 
-	// Handle binary operators with precedence climbing
-	for len(rest) > 0 {
-		tok := rest[0]
-		tokVal := tok.Value
-
-		// Check if it's an operator and get its precedence
-		prec, rightAssoc := p.getOperatorPrecedence(tokVal)
-		if prec < minPrec {
-			break
-		}
-
-		// Consume operator
-		rest = rest[1:]
-
-		// Adjust precedence for right associativity
-		nextMinPrec := prec
-		if !rightAssoc {
-			nextMinPrec = prec + 1
-		}
-
-		// Parse right-hand side
-		var right ExpressionNode
-		right, rest, err = p.parseExpressionTokens(rest, nextMinPrec)
-		if err != nil {
-			return nil, err
-		}
-
-		// Build node based on operator
-		left = p.buildBinaryNode(tokVal, left, right)
-	}
-
+	// Check for unparsed tokens (errors)
 	if len(rest) > 0 {
-		// Check if remaining tokens are valid continuations
-		// For now, return error for unexpected tokens
-		// (We'll handle this better as we add more operators)
+		// Some remaining tokens may be valid in certain contexts
+		// For now, we'll just return what we have
 	}
 
-	return left, nil
+	return result, nil
 }
 
 // parseExpressionTokens parses tokens and returns remaining tokens.
@@ -117,6 +86,64 @@ func (p *Parser) parseExpressionTokens(tokens []lexer.Token, minPrec int) (Expre
 	for len(rest) > 0 {
 		tok := rest[0]
 		tokVal := tok.Value
+
+		// Special handling for 'as' keyword (variable binding)
+		if tokVal == "as" {
+			prec, _ := p.getOperatorPrecedence("as")
+			if prec < minPrec {
+				break
+			}
+
+			// Parse: expr as $var | body  OR  expr as {pattern} | body
+			rest = rest[1:] // consume 'as'
+
+			if len(rest) == 0 {
+				return nil, nil, fmt.Errorf("expected variable after 'as'")
+			}
+
+			// Check for variable or destructuring pattern
+			var varName string
+			if p.isTokenType(rest[0], "Variable") {
+				varName = rest[0].Value[1:] // Remove $
+				rest = rest[1:]
+			} else if rest[0].Value == "{" {
+				// Skip destructuring for now - just treat as identity
+				// Find matching }
+				depth := 1
+				end := 1
+				for ; end < len(rest) && depth > 0; end++ {
+					if rest[end].Value == "{" {
+						depth++
+					} else if rest[end].Value == "}" {
+						depth--
+					}
+				}
+				rest = rest[end:]
+				varName = "_destructure" // placeholder
+			} else {
+				return nil, nil, fmt.Errorf("expected variable after 'as', got %s", rest[0].Value)
+			}
+
+			// Expect | after variable
+			if len(rest) == 0 || rest[0].Value != "|" {
+				return nil, nil, fmt.Errorf("expected '|' after variable binding")
+			}
+			rest = rest[1:] // consume '|'
+
+			// Parse body (rest of expression)
+			var body ExpressionNode
+			body, rest, err = p.parseExpressionTokens(rest, 0)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			left = &VariableBindNode{
+				Expr:    left,
+				VarName: varName,
+				Body:    body,
+			}
+			continue
+		}
 
 		prec, rightAssoc := p.getOperatorPrecedence(tokVal)
 		if prec < minPrec {
@@ -175,6 +202,19 @@ func (p *Parser) parsePrimary(tokens []lexer.Token) (ExpressionNode, []lexer.Tok
 		}
 		return &LiteralNode{Value: val}, tokens[1:], nil
 
+	// Unary minus (negative number or negation)
+	case tok.Value == "-":
+		rest := tokens[1:]
+		if len(rest) == 0 {
+			return nil, nil, fmt.Errorf("unexpected end of expression after -")
+		}
+		// Parse the operand
+		operand, rest, err := p.parsePrimary(rest)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &UnaryOpNode{Op: "-", Expr: operand}, rest, nil
+
 	// String literal
 	case p.isTokenType(tok, "String"):
 		// Remove quotes and unescape
@@ -225,6 +265,28 @@ func (p *Parser) parseDotExpression(tokens []lexer.Token) (ExpressionNode, []lex
 			node, rest, err = p.parseBracketAccess(node, rest)
 			if err != nil {
 				return nil, nil, err
+			}
+
+		// Chained dot access: .user.name (the second . starts another field)
+		case tok.Value == ".":
+			// Consume the .
+			rest = rest[1:]
+			if len(rest) == 0 {
+				return nil, nil, fmt.Errorf("unexpected end of expression after .")
+			}
+			// Next token should be an identifier or [
+			nextTok := rest[0]
+			if p.isTokenType(nextTok, "Ident") {
+				node = &FieldAccessNode{Field: nextTok.Value, From: node}
+				rest = rest[1:]
+			} else if nextTok.Value == "[" {
+				var err error
+				node, rest, err = p.parseBracketAccess(node, rest)
+				if err != nil {
+					return nil, nil, err
+				}
+			} else {
+				return nil, nil, fmt.Errorf("expected identifier or [ after ., got %s", nextTok.Value)
 			}
 
 		default:
@@ -624,9 +686,123 @@ func (p *Parser) parseFunctionCall(name string, tokens []lexer.Token) (Expressio
 }
 
 // parseConditional parses if-then-else
+// Format: if COND then EXPR [elif COND then EXPR]* [else EXPR] end
 func (p *Parser) parseConditional(tokens []lexer.Token) (ExpressionNode, []lexer.Token, error) {
-	// TODO: implement
-	return nil, nil, fmt.Errorf("conditionals not yet implemented")
+	// Parse condition (tokens start after 'if')
+	condTokens, rest := p.extractUntilKeyword(tokens, "then")
+	if rest == nil {
+		return nil, nil, fmt.Errorf("expected 'then' after if condition")
+	}
+
+	// Skip 'then'
+	rest = rest[1:]
+
+	cond, _, err := p.parseExpressionTokens(condTokens, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing if condition: %w", err)
+	}
+
+	// Parse then branch (until 'elif', 'else', or 'end')
+	thenTokens, rest, keyword := p.extractUntilKeywords(rest, []string{"elif", "else", "end"})
+	if rest == nil {
+		return nil, nil, fmt.Errorf("expected 'elif', 'else', or 'end' after then branch")
+	}
+
+	thenExpr, _, err := p.parseExpressionTokens(thenTokens, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing then branch: %w", err)
+	}
+
+	// Skip the keyword
+	rest = rest[1:]
+
+	var elseExpr ExpressionNode
+
+	switch keyword {
+	case "elif":
+		// Recursively parse the elif as another if-then-else
+		elseExpr, rest, err = p.parseConditional(rest)
+		if err != nil {
+			return nil, nil, err
+		}
+	case "else":
+		// Parse else branch until 'end'
+		elseTokens, rest2 := p.extractUntilKeyword(rest, "end")
+		if rest2 == nil {
+			return nil, nil, fmt.Errorf("expected 'end' after else branch")
+		}
+
+		elseExpr, _, err = p.parseExpressionTokens(elseTokens, 0)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing else branch: %w", err)
+		}
+
+		// Skip 'end'
+		rest = rest2[1:]
+	case "end":
+		// No else branch, return identity
+		elseExpr = &IdentityNode{}
+	}
+
+	return &ConditionalNode{
+		Condition: cond,
+		Then:      thenExpr,
+		Else:      elseExpr,
+	}, rest, nil
+}
+
+// extractUntilKeyword extracts tokens until a keyword is found (respecting nesting)
+func (p *Parser) extractUntilKeyword(tokens []lexer.Token, keyword string) ([]lexer.Token, []lexer.Token) {
+	depth := 0
+	for i, tok := range tokens {
+		// Only match keyword at depth 0 BEFORE adjusting depth
+		if depth == 0 && tok.Value == keyword {
+			return tokens[:i], tokens[i:]
+		}
+
+		// Track nesting depth
+		if tok.Value == "if" || tok.Value == "try" {
+			depth++
+		} else if tok.Value == "end" {
+			depth--
+		}
+		// Parentheses/brackets are handled separately
+		if tok.Value == "(" || tok.Value == "[" || tok.Value == "{" {
+			depth++
+		} else if tok.Value == ")" || tok.Value == "]" || tok.Value == "}" {
+			depth--
+		}
+	}
+	return nil, nil
+}
+
+// extractUntilKeywords extracts tokens until one of the keywords is found
+func (p *Parser) extractUntilKeywords(tokens []lexer.Token, keywords []string) ([]lexer.Token, []lexer.Token, string) {
+	depth := 0
+	for i, tok := range tokens {
+		// Only match keywords at depth 0 BEFORE adjusting depth
+		if depth == 0 {
+			for _, kw := range keywords {
+				if tok.Value == kw {
+					return tokens[:i], tokens[i:], kw
+				}
+			}
+		}
+
+		// Track nesting depth
+		if tok.Value == "if" || tok.Value == "try" {
+			depth++
+		} else if tok.Value == "end" {
+			depth--
+		}
+		// Parentheses/brackets are handled separately
+		if tok.Value == "(" || tok.Value == "[" || tok.Value == "{" {
+			depth++
+		} else if tok.Value == ")" || tok.Value == "]" || tok.Value == "}" {
+			depth--
+		}
+	}
+	return nil, nil, ""
 }
 
 // parseTryCatch parses try-catch
@@ -642,20 +818,22 @@ func (p *Parser) getOperatorPrecedence(op string) (int, bool) {
 		return 1, false
 	case ",":
 		return 2, false
+	case "as":
+		return 3, true // 'as' binds tighter than comma, looser than pipe
 	case "//":
-		return 3, true
+		return 4, true
 	case "or":
-		return 4, false
-	case "and":
 		return 5, false
-	case "==", "!=":
+	case "and":
 		return 6, false
-	case "<", ">", "<=", ">=":
+	case "==", "!=":
 		return 7, false
-	case "+", "-":
+	case "<", ">", "<=", ">=":
 		return 8, false
-	case "*", "/", "%":
+	case "+", "-":
 		return 9, false
+	case "*", "/", "%":
+		return 10, false
 	default:
 		return -1, false // Not an operator we handle here
 	}
@@ -674,6 +852,11 @@ func (p *Parser) buildBinaryNode(op string, left, right ExpressionNode) Expressi
 		return &CommaNode{Expressions: []ExpressionNode{left, right}}
 	case "//":
 		return &AlternativeNode{Left: left, Right: right}
+	case "as":
+		// For "expr as $var | body", right should be parsed as "var | body"
+		// But the way we parse, 'right' is just the variable part
+		// We need to handle this specially in parseExpressionTokens
+		return &BinaryOpNode{Op: "as", Left: left, Right: right}
 	default:
 		return &BinaryOpNode{Op: op, Left: left, Right: right}
 	}
