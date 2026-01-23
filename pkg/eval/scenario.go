@@ -28,7 +28,7 @@ type Scenario struct {
 	//   - `42` equals `42.0` (int vs float for whole numbers)
 	//
 	// You can use either JSON or HUML syntax in Expected values.
-	// The test harness uses koanf for format-agnostic comparison.
+	// The test harness performs semantic comparison using JSON, YAML, and HUML parsers.
 	Expected []string
 
 	// ExpectedError is the expected error message (if any)

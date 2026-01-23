@@ -2,8 +2,8 @@
 //
 // # Semantic Test Comparison
 //
-// The test harness uses koanf for format-agnostic comparison of expected vs actual
-// values. This means you can write Expected values in either JSON or HUML format:
+// The test harness performs semantic comparison of expected vs actual values using
+// JSON, YAML, and HUML parsers. This means you can write Expected values in either format:
 //
 //	// These are equivalent in tests:
 //	Expected: []string{`{"name": "Alice", "age": 30}`}     // JSON
