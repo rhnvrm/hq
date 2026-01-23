@@ -1,6 +1,6 @@
 # hq - HUML Query Processor
 
-A command-line processor for [HUML](https://huml.io) (Human-Oriented Markup Language) with jq-compatible syntax.
+A command-line processor for [HUML](https://huml.io) (Human-Oriented Markup Language) with jq/yq-compatible syntax. Think of it as [yq](https://github.com/mikefarah/yq) for HUML.
 
 ```bash
 # Query a HUML config file
@@ -200,7 +200,8 @@ See [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) for comprehensive examples.
 
 - [HUML Specification](https://huml.io) - Official HUML language specification
 - [go-huml](https://github.com/huml-lang/go-huml) - Go library for HUML parsing
-- [jq](https://github.com/jqlang/jq) - JSON processor (syntax inspiration)
+- [jq](https://github.com/jqlang/jq) - JSON processor (expression syntax)
+- [yq](https://github.com/mikefarah/yq) - YAML/JSON/XML processor (architecture inspiration)
 
 ## License
 
